@@ -1,0 +1,306 @@
+{
+  "info": {
+    "name": "AbsensiPro API",
+    "description": "Koleksi Postman untuk Sistem Absensi Karyawan (AbsensiPro). Backend FastAPI + MongoDB + JWT. Semua endpoint berprefix /api. Auth memakai Bearer token (login mengisi variabel {{token}} otomatis).",
+    "schema": "https://schema.getpostman.com/json/collection/v2.1.0/collection.json"
+  },
+  "auth": {
+    "type": "bearer",
+    "bearer": [{ "key": "token", "value": "{{token}}", "type": "string" }]
+  },
+  "variable": [
+    { "key": "base_url", "value": "https://office-monitor-2.preview.emergentagent.com", "type": "string" },
+    { "key": "token", "value": "", "type": "string" },
+    { "key": "employee_id", "value": "", "type": "string" },
+    { "key": "office_id", "value": "", "type": "string" },
+    { "key": "office_qr", "value": "OFFICE-HQJKT00001", "type": "string" }
+  ],
+  "item": [
+    {
+      "name": "Auth",
+      "item": [
+        {
+          "name": "Login (Owner) — auto save token",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "const res = pm.response.json();",
+                  "if (res.token) {",
+                  "  pm.collectionVariables.set('token', res.token);",
+                  "  console.log('Token tersimpan untuk', res.user && res.user.email);",
+                  "}",
+                  "pm.test('status 200', () => pm.response.to.have.status(200));",
+                  "pm.test('ada token', () => pm.expect(res.token).to.be.a('string'));"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "auth": { "type": "noauth" },
+            "method": "POST",
+            "header": [{ "key": "Content-Type", "value": "application/json" }],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"email\": \"owner@company.com\",\n  \"password\": \"password123\"\n}"
+            },
+            "url": { "raw": "{{base_url}}/api/auth/login", "host": ["{{base_url}}"], "path": ["api", "auth", "login"] }
+          }
+        },
+        {
+          "name": "Login (Staff)",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "const res = pm.response.json();",
+                  "if (res.token) pm.collectionVariables.set('token', res.token);"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "auth": { "type": "noauth" },
+            "method": "POST",
+            "header": [{ "key": "Content-Type", "value": "application/json" }],
+            "body": { "mode": "raw", "raw": "{\n  \"email\": \"dewi@company.com\",\n  \"password\": \"password123\"\n}" },
+            "url": { "raw": "{{base_url}}/api/auth/login", "host": ["{{base_url}}"], "path": ["api", "auth", "login"] }
+          }
+        },
+        {
+          "name": "Register",
+          "request": {
+            "auth": { "type": "noauth" },
+            "method": "POST",
+            "header": [{ "key": "Content-Type", "value": "application/json" }],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"name\": \"Karyawan Baru\",\n  \"email\": \"baru@company.com\",\n  \"password\": \"password123\",\n  \"role\": \"staff\",\n  \"department\": \"Operasional\",\n  \"position\": \"Staff\"\n}"
+            },
+            "url": { "raw": "{{base_url}}/api/auth/register", "host": ["{{base_url}}"], "path": ["api", "auth", "register"] }
+          }
+        },
+        {
+          "name": "Me (profil token saat ini)",
+          "request": {
+            "method": "GET",
+            "url": { "raw": "{{base_url}}/api/auth/me", "host": ["{{base_url}}"], "path": ["api", "auth", "me"] }
+          }
+        }
+      ]
+    },
+    {
+      "name": "Dashboard & Monitoring",
+      "item": [
+        {
+          "name": "Dashboard Stats (owner/direksi/manager)",
+          "request": {
+            "method": "GET",
+            "url": { "raw": "{{base_url}}/api/dashboard/stats", "host": ["{{base_url}}"], "path": ["api", "dashboard", "stats"] }
+          }
+        },
+        {
+          "name": "Attendance Semua Karyawan (per tanggal)",
+          "request": {
+            "method": "GET",
+            "url": {
+              "raw": "{{base_url}}/api/attendance?date=2026-06-21",
+              "host": ["{{base_url}}"],
+              "path": ["api", "attendance"],
+              "query": [{ "key": "date", "value": "2026-06-21", "description": "Format YYYY-MM-DD. Kosongkan untuk hari ini." }]
+            }
+          }
+        }
+      ]
+    },
+    {
+      "name": "Attendance (Absensi)",
+      "item": [
+        {
+          "name": "Cek Status Hari Ini",
+          "request": {
+            "method": "GET",
+            "url": { "raw": "{{base_url}}/api/attendance/today", "host": ["{{base_url}}"], "path": ["api", "attendance", "today"] }
+          }
+        },
+        {
+          "name": "Check-in via QR (lokasi kantor — sukses)",
+          "request": {
+            "method": "POST",
+            "header": [{ "key": "Content-Type", "value": "application/json" }],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"method\": \"qr\",\n  \"qr_code\": \"{{office_qr}}\",\n  \"lat\": -6.208763,\n  \"lng\": 106.845599\n}"
+            },
+            "url": { "raw": "{{base_url}}/api/attendance/check-in", "host": ["{{base_url}}"], "path": ["api", "attendance", "check-in"] },
+            "description": "Login sebagai staff dulu (dewi@company.com). Koordinat di dalam radius kantor -> berhasil."
+          }
+        },
+        {
+          "name": "Check-in via QR (jauh dari kantor — 400 geofence)",
+          "request": {
+            "method": "POST",
+            "header": [{ "key": "Content-Type", "value": "application/json" }],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"method\": \"qr\",\n  \"qr_code\": \"{{office_qr}}\",\n  \"lat\": 0,\n  \"lng\": 0\n}"
+            },
+            "url": { "raw": "{{base_url}}/api/attendance/check-in", "host": ["{{base_url}}"], "path": ["api", "attendance", "check-in"] }
+          }
+        },
+        {
+          "name": "Check-in via Wajah (perlu descriptor 128-d)",
+          "request": {
+            "method": "POST",
+            "header": [{ "key": "Content-Type", "value": "application/json" }],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"method\": \"face\",\n  \"lat\": -6.208763,\n  \"lng\": 106.845599,\n  \"descriptor\": [/* 128 angka float dari face-api.js */]\n}"
+            },
+            "url": { "raw": "{{base_url}}/api/attendance/check-in", "host": ["{{base_url}}"], "path": ["api", "attendance", "check-in"] },
+            "description": "Descriptor dihasilkan di browser oleh face-api.js. Tanpa wajah terdaftar -> 400."
+          }
+        },
+        {
+          "name": "Check-out",
+          "request": {
+            "method": "POST",
+            "header": [{ "key": "Content-Type", "value": "application/json" }],
+            "body": { "mode": "raw", "raw": "{\n  \"lat\": -6.208763,\n  \"lng\": 106.845599\n}" },
+            "url": { "raw": "{{base_url}}/api/attendance/check-out", "host": ["{{base_url}}"], "path": ["api", "attendance", "check-out"] }
+          }
+        },
+        {
+          "name": "Riwayat Absensi Saya",
+          "request": {
+            "method": "GET",
+            "url": { "raw": "{{base_url}}/api/attendance/me", "host": ["{{base_url}}"], "path": ["api", "attendance", "me"] }
+          }
+        }
+      ]
+    },
+    {
+      "name": "Face (Biometrik)",
+      "item": [
+        {
+          "name": "Daftarkan Wajah",
+          "request": {
+            "method": "POST",
+            "header": [{ "key": "Content-Type", "value": "application/json" }],
+            "body": { "mode": "raw", "raw": "{\n  \"descriptor\": [/* 128 angka float dari face-api.js */]\n}" },
+            "url": { "raw": "{{base_url}}/api/face/enroll", "host": ["{{base_url}}"], "path": ["api", "face", "enroll"] }
+          }
+        }
+      ]
+    },
+    {
+      "name": "Employees (Manajemen)",
+      "item": [
+        {
+          "name": "List Karyawan",
+          "request": {
+            "method": "GET",
+            "url": { "raw": "{{base_url}}/api/employees", "host": ["{{base_url}}"], "path": ["api", "employees"] }
+          }
+        },
+        {
+          "name": "Tambah Karyawan — auto save employee_id",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "const res = pm.response.json();",
+                  "if (res.id) pm.collectionVariables.set('employee_id', res.id);"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [{ "key": "Content-Type", "value": "application/json" }],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"name\": \"Andi Saputra\",\n  \"email\": \"andi@company.com\",\n  \"password\": \"password123\",\n  \"role\": \"staff\",\n  \"department\": \"Keuangan\",\n  \"position\": \"Staff\"\n}"
+            },
+            "url": { "raw": "{{base_url}}/api/employees", "host": ["{{base_url}}"], "path": ["api", "employees"] }
+          }
+        },
+        {
+          "name": "Update Karyawan",
+          "request": {
+            "method": "PUT",
+            "header": [{ "key": "Content-Type", "value": "application/json" }],
+            "body": { "mode": "raw", "raw": "{\n  \"position\": \"Senior Staff\",\n  \"department\": \"Keuangan\"\n}" },
+            "url": { "raw": "{{base_url}}/api/employees/{{employee_id}}", "host": ["{{base_url}}"], "path": ["api", "employees", "{{employee_id}}"] }
+          }
+        },
+        {
+          "name": "Hapus Karyawan",
+          "request": {
+            "method": "DELETE",
+            "url": { "raw": "{{base_url}}/api/employees/{{employee_id}}", "host": ["{{base_url}}"], "path": ["api", "employees", "{{employee_id}}"] }
+          }
+        }
+      ]
+    },
+    {
+      "name": "Offices (Lokasi & Geofence)",
+      "item": [
+        {
+          "name": "List Lokasi Kantor",
+          "request": {
+            "method": "GET",
+            "url": { "raw": "{{base_url}}/api/offices", "host": ["{{base_url}}"], "path": ["api", "offices"] }
+          }
+        },
+        {
+          "name": "Tambah Lokasi — auto save office_id & qr",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "const res = pm.response.json();",
+                  "if (res.id) pm.collectionVariables.set('office_id', res.id);",
+                  "if (res.qr_code) pm.collectionVariables.set('office_qr', res.qr_code);"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [{ "key": "Content-Type", "value": "application/json" }],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"name\": \"Kantor Cabang Bandung\",\n  \"lat\": -6.917464,\n  \"lng\": 107.619123,\n  \"radius_m\": 200\n}"
+            },
+            "url": { "raw": "{{base_url}}/api/offices", "host": ["{{base_url}}"], "path": ["api", "offices"] }
+          }
+        },
+        {
+          "name": "Update Lokasi",
+          "request": {
+            "method": "PUT",
+            "header": [{ "key": "Content-Type", "value": "application/json" }],
+            "body": { "mode": "raw", "raw": "{\n  \"name\": \"Kantor Cabang Bandung\",\n  \"lat\": -6.917464,\n  \"lng\": 107.619123,\n  \"radius_m\": 300\n}" },
+            "url": { "raw": "{{base_url}}/api/offices/{{office_id}}", "host": ["{{base_url}}"], "path": ["api", "offices", "{{office_id}}"] }
+          }
+        },
+        {
+          "name": "Hapus Lokasi",
+          "request": {
+            "method": "DELETE",
+            "url": { "raw": "{{base_url}}/api/offices/{{office_id}}", "host": ["{{base_url}}"], "path": ["api", "offices", "{{office_id}}"] }
+          }
+        }
+      ]
+    }
+  ]
+}
