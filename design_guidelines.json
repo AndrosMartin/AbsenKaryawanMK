@@ -1,0 +1,119 @@
+{
+  "theme": "Light",
+  "archetype": "Archetype 4 (Swiss & High-Contrast) - Corporate Variant",
+  "design_philosophy": {
+    "core_principles": [
+      "Authority & Clarity: The dashboard must instantly communicate trust and stability to Owners and Managers.",
+      "Density & Precision: Use a 'Control Room' grid layout for the dashboard. Tight gaps, exact alignments, no wasted space.",
+      "Professional but Modern: Avoid generic SaaS looks. Use structural borders, high-contrast typography, and purposeful negative space."
+    ],
+    "anti_patterns": [
+      "No drop-shadow overuse. Rely on 1px solid borders for separation.",
+      "No generic Inter font for headings. Use Cabinet Grotesk for an authoritative corporate edge.",
+      "No center-aligned forms or tables. Everything must follow strict left-aligned or grid-aligned reading patterns."
+    ]
+  },
+  "typography": {
+    "fonts": {
+      "headings": {
+        "family": "'Cabinet Grotesk', sans-serif",
+        "import_url": "https://api.fontshare.com/v2/css?f[]=cabinet-grotesk@800,500,700,400&display=swap"
+      },
+      "body": {
+        "family": "'IBM Plex Sans', sans-serif",
+        "import_url": "https://fonts.googleapis.com/css2?family=IBM+Plex+Sans:wght@400;500;600&display=swap"
+      },
+      "mono": {
+        "family": "'JetBrains Mono', monospace",
+        "import_url": "https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@400;500&display=swap",
+        "usage": "Time, Employee IDs, Dates, GPS Coordinates"
+      }
+    },
+    "scale": {
+      "h1": "text-3xl md:text-4xl font-bold tracking-tight text-slate-900",
+      "h2": "text-xl md:text-2xl font-semibold tracking-tight text-slate-900",
+      "h3": "text-lg font-medium text-slate-800",
+      "body": "text-sm md:text-base text-slate-600 leading-relaxed",
+      "small": "text-xs font-medium text-slate-500 uppercase tracking-widest",
+      "metric": "text-3xl md:text-4xl font-bold tracking-tighter text-slate-900 font-headings"
+    }
+  },
+  "colors": {
+    "backgrounds": {
+      "app": "bg-slate-50",
+      "surface": "bg-white",
+      "surface_hover": "hover:bg-slate-50",
+      "sidebar": "bg-slate-900"
+    },
+    "text": {
+      "primary": "text-slate-900",
+      "secondary": "text-slate-600",
+      "tertiary": "text-slate-400",
+      "inverse": "text-white"
+    },
+    "borders": {
+      "default": "border-slate-200",
+      "focus": "focus:border-slate-900 focus:ring-slate-900"
+    },
+    "actions": {
+      "primary": "bg-slate-900 text-white hover:bg-slate-800",
+      "secondary": "bg-white text-slate-900 border border-slate-200 hover:bg-slate-50",
+      "danger": "bg-rose-600 text-white hover:bg-rose-700"
+    },
+    "status": {
+      "present": "bg-emerald-50 text-emerald-700 border border-emerald-200",
+      "late": "bg-amber-50 text-amber-700 border border-amber-200",
+      "absent": "bg-rose-50 text-rose-700 border border-rose-200"
+    }
+  },
+  "layout_and_spacing": {
+    "container": "max-w-7xl mx-auto px-4 sm:px-6 lg:px-8",
+    "dashboard_grid": "grid grid-cols-1 md:grid-cols-3 lg:grid-cols-4 gap-6",
+    "section_gap": "space-y-8",
+    "card_padding": "p-6"
+  },
+  "components": {
+    "card": "bg-white border border-slate-200 rounded-xl shadow-sm overflow-hidden",
+    "stat_card": "bg-white border border-slate-200 rounded-xl p-6 flex flex-col gap-2 relative overflow-hidden",
+    "button": "inline-flex items-center justify-center px-4 py-2 text-sm font-medium rounded-lg transition-colors focus:outline-none focus:ring-2 focus:ring-offset-2",
+    "input": "w-full px-3 py-2 bg-white border border-slate-200 rounded-lg text-sm placeholder-slate-400 focus:outline-none focus:ring-2 focus:ring-slate-900 focus:border-transparent transition-all",
+    "label": "block text-sm font-medium text-slate-700 mb-1.5",
+    "badge": "inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-medium border",
+    "table": {
+      "wrapper": "w-full overflow-x-auto border border-slate-200 rounded-xl bg-white",
+      "header": "bg-slate-50 border-b border-slate-200",
+      "th": "px-6 py-3 text-left text-xs font-medium text-slate-500 uppercase tracking-wider",
+      "td": "px-6 py-4 whitespace-nowrap text-sm text-slate-700 border-b border-slate-100",
+      "row": "hover:bg-slate-50 transition-colors"
+    },
+    "camera_panel": "relative w-full aspect-video bg-slate-900 rounded-xl overflow-hidden border border-slate-800 flex items-center justify-center"
+  },
+  "icons": {
+    "library": "Phosphor Icons",
+    "cdn_link": "<script src=\"https://unpkg.com/@phosphor-icons/web\"></script>",
+    "usage": "Use 'ph' and 'ph-fill' classes. e.g., <i class='ph ph-user text-xl'></i>",
+    "style": "Regular for UI elements, Fill for active navigation/states."
+  },
+  "media": {
+    "image_urls": [
+      {
+        "url": "https://images.unsplash.com/photo-1715593949273-09009558300a?crop=entropy&cs=srgb&fm=jpg&ixid=M3w4NjY2NzZ8MHwxfHNlYXJjaHwxfHxtb2Rlcm4lMjBvZmZpY2UlMjBpbnRlcmlvciUyMGFyY2hpdGVjdHxlbnwwfHx8fDE3ODIwMTk5NjJ8MA&ixlib=rb-4.1.0&q=85",
+        "description": "Modern office interior with architectural design.",
+        "category": "login_background",
+        "usage_instructions": "Use as a split-screen cover image for the Authentication/Login screen to establish a corporate, formal mood."
+      },
+      {
+        "url": "https://images.unsplash.com/photo-1560250097-0b93528c311a?crop=entropy&cs=srgb&fm=jpg&ixid=M3w3NTY2NzB8MHwxfHNlYXJjaHwxfHxwcm9mZXNzaW9uYWwlMjBjb3Jwb3JhdGUlMjBwb3J0cmFpdHxlbnwwfHx8fDE3ODIwMTk5NjJ8MA&ixlib=rb-4.1.0&q=85",
+        "description": "Professional corporate portrait of a man.",
+        "category": "user_avatar",
+        "usage_instructions": "Use as the placeholder avatar for the Manager/Owner profile in the topbar or employee lists."
+      }
+    ]
+  },
+  "technical_requirements": {
+    "framework": "Vanilla HTML + Tailwind CSS Play CDN + Vanilla JS",
+    "architecture": "Single index.html acting as a shell. Sidebar and topbar are static. Main content area (#app-content) swaps dynamically using Vanilla JS module fetching.",
+    "testing_attributes": "CRITICAL: All interactive elements (buttons, inputs, menu items, table rows) MUST include a 'data-testid' attribute (e.g., data-testid='clock-in-btn').",
+    "tailwind_config": "Include standard custom fonts and colors via the Tailwind Play CDN <script> configuration block."
+  }
+}
