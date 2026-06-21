@@ -1,88 +1,643 @@
-from fastapi import FastAPI, APIRouter
 from dotenv import load_dotenv
-from starlette.middleware.cors import CORSMiddleware
-from motor.motor_asyncio import AsyncIOMotorClient
-import os
-import logging
 from pathlib import Path
-from pydantic import BaseModel, Field, ConfigDict
-from typing import List
-import uuid
-from datetime import datetime, timezone
-
+import os
 
 ROOT_DIR = Path(__file__).parent
 load_dotenv(ROOT_DIR / '.env')
 
-# MongoDB connection
+from fastapi import FastAPI, APIRouter, HTTPException, Depends, Request, Query
+from starlette.middleware.cors import CORSMiddleware
+from motor.motor_asyncio import AsyncIOMotorClient
+from bson import ObjectId
+from pydantic import BaseModel, Field, EmailStr, ConfigDict, BeforeValidator
+from typing import List, Optional, Annotated, Any
+from datetime import datetime, timezone, timedelta
+from zoneinfo import ZoneInfo
+import logging
+import math
+import uuid
+import bcrypt
+import jwt
+
+# ----------------------------------------------------------------------------
+# Setup
+# ----------------------------------------------------------------------------
 mongo_url = os.environ['MONGO_URL']
 client = AsyncIOMotorClient(mongo_url)
 db = client[os.environ['DB_NAME']]
 
-# Create the main app without a prefix
-app = FastAPI()
+JWT_SECRET = os.environ['JWT_SECRET']
+JWT_ALGORITHM = "HS256"
+TZ = ZoneInfo("Asia/Jakarta")
+WORK_START = os.environ.get("WORK_START", "09:00")
+FACE_MATCH_THRESHOLD = 0.55
 
-# Create a router with the /api prefix
+MONITOR_ROLES = {"owner", "direksi", "manager"}
+MANAGE_ROLES = {"owner", "direksi"}
+
+app = FastAPI(title="AbsensiPro API")
 api_router = APIRouter(prefix="/api")
 
+logging.basicConfig(level=logging.INFO,
+                    format='%(asctime)s - %(name)s - %(levelname)s - %(message)s')
+logger = logging.getLogger("absensipro")
 
-# Define Models
-class StatusCheck(BaseModel):
-    model_config = ConfigDict(extra="ignore")  # Ignore MongoDB's _id field
-    
-    id: str = Field(default_factory=lambda: str(uuid.uuid4()))
-    client_name: str
-    timestamp: datetime = Field(default_factory=lambda: datetime.now(timezone.utc))
+PyObjectId = Annotated[str, BeforeValidator(str)]
 
-class StatusCheckCreate(BaseModel):
-    client_name: str
 
-# Add your routes to the router instead of directly to app
-@api_router.get("/")
-async def root():
-    return {"message": "Hello World"}
+# ----------------------------------------------------------------------------
+# Auth helpers
+# ----------------------------------------------------------------------------
+def hash_password(password: str) -> str:
+    return bcrypt.hashpw(password.encode("utf-8"), bcrypt.gensalt()).decode("utf-8")
 
-@api_router.post("/status", response_model=StatusCheck)
-async def create_status_check(input: StatusCheckCreate):
-    status_dict = input.model_dump()
-    status_obj = StatusCheck(**status_dict)
-    
-    # Convert to dict and serialize datetime to ISO string for MongoDB
-    doc = status_obj.model_dump()
-    doc['timestamp'] = doc['timestamp'].isoformat()
-    
-    _ = await db.status_checks.insert_one(doc)
-    return status_obj
 
-@api_router.get("/status", response_model=List[StatusCheck])
-async def get_status_checks():
-    # Exclude MongoDB's _id field from the query results
-    status_checks = await db.status_checks.find({}, {"_id": 0}).to_list(1000)
-    
-    # Convert ISO string timestamps back to datetime objects
-    for check in status_checks:
-        if isinstance(check['timestamp'], str):
-            check['timestamp'] = datetime.fromisoformat(check['timestamp'])
-    
-    return status_checks
+def verify_password(plain: str, hashed: str) -> bool:
+    try:
+        return bcrypt.checkpw(plain.encode("utf-8"), hashed.encode("utf-8"))
+    except Exception:
+        return False
 
-# Include the router in the main app
+
+def create_access_token(user_id: str, email: str, role: str) -> str:
+    payload = {
+        "sub": user_id, "email": email, "role": role,
+        "exp": datetime.now(timezone.utc) + timedelta(days=7),
+        "type": "access",
+    }
+    return jwt.encode(payload, JWT_SECRET, algorithm=JWT_ALGORITHM)
+
+
+async def get_current_user(request: Request) -> dict:
+    token = request.cookies.get("access_token")
+    if not token:
+        auth = request.headers.get("Authorization", "")
+        if auth.startswith("Bearer "):
+            token = auth[7:]
+    if not token:
+        raise HTTPException(status_code=401, detail="Not authenticated")
+    try:
+        payload = jwt.decode(token, JWT_SECRET, algorithms=[JWT_ALGORITHM])
+    except jwt.ExpiredSignatureError:
+        raise HTTPException(status_code=401, detail="Token expired")
+    except jwt.InvalidTokenError:
+        raise HTTPException(status_code=401, detail="Invalid token")
+    user = await db.users.find_one({"_id": ObjectId(payload["sub"])})
+    if not user:
+        raise HTTPException(status_code=401, detail="User not found")
+    return user
+
+
+def require_roles(roles: set):
+    async def checker(user: dict = Depends(get_current_user)) -> dict:
+        if user.get("role") not in roles:
+            raise HTTPException(status_code=403, detail="Akses ditolak untuk role Anda")
+        return user
+    return checker
+
+
+def public_user(u: dict) -> dict:
+    return {
+        "id": str(u["_id"]),
+        "email": u["email"],
+        "name": u.get("name"),
+        "role": u.get("role"),
+        "department": u.get("department"),
+        "position": u.get("position"),
+        "employee_id": u.get("employee_id"),
+        "phone": u.get("phone"),
+        "face_enrolled": bool(u.get("face_descriptor")),
+        "created_at": u.get("created_at"),
+    }
+
+
+# ----------------------------------------------------------------------------
+# Utilities
+# ----------------------------------------------------------------------------
+def haversine_m(lat1, lon1, lat2, lon2) -> float:
+    R = 6371000
+    p1, p2 = math.radians(lat1), math.radians(lat2)
+    dphi = math.radians(lat2 - lat1)
+    dl = math.radians(lon2 - lon1)
+    a = math.sin(dphi / 2) ** 2 + math.cos(p1) * math.cos(p2) * math.sin(dl / 2) ** 2
+    return 2 * R * math.asin(math.sqrt(a))
+
+
+def euclidean(a: List[float], b: List[float]) -> float:
+    return math.sqrt(sum((x - y) ** 2 for x, y in zip(a, b)))
+
+
+def today_str() -> str:
+    return datetime.now(TZ).strftime("%Y-%m-%d")
+
+
+def now_iso() -> str:
+    return datetime.now(timezone.utc).isoformat()
+
+
+def compute_status(check_in_dt: datetime) -> str:
+    local = check_in_dt.astimezone(TZ)
+    hh, mm = map(int, WORK_START.split(":"))
+    limit = local.replace(hour=hh, minute=mm, second=0, microsecond=0)
+    return "late" if local > limit else "present"
+
+
+# ----------------------------------------------------------------------------
+# Models
+# ----------------------------------------------------------------------------
+class RegisterBody(BaseModel):
+    name: str
+    email: EmailStr
+    password: str
+    role: str = "staff"
+    department: Optional[str] = "Umum"
+    position: Optional[str] = "Staff"
+    phone: Optional[str] = None
+
+
+class LoginBody(BaseModel):
+    email: EmailStr
+    password: str
+
+
+class EmployeeBody(BaseModel):
+    name: str
+    email: EmailStr
+    password: str = "password123"
+    role: str = "staff"
+    department: Optional[str] = "Umum"
+    position: Optional[str] = "Staff"
+    phone: Optional[str] = None
+
+
+class EmployeeUpdate(BaseModel):
+    name: Optional[str] = None
+    role: Optional[str] = None
+    department: Optional[str] = None
+    position: Optional[str] = None
+    phone: Optional[str] = None
+    password: Optional[str] = None
+
+
+class FaceEnrollBody(BaseModel):
+    descriptor: List[float]
+
+
+class OfficeBody(BaseModel):
+    name: str
+    lat: float
+    lng: float
+    radius_m: int = 200
+
+
+class CheckInBody(BaseModel):
+    method: str  # "face" | "qr"
+    lat: float
+    lng: float
+    descriptor: Optional[List[float]] = None
+    qr_code: Optional[str] = None
+
+
+class CheckOutBody(BaseModel):
+    lat: Optional[float] = None
+    lng: Optional[float] = None
+
+
+# ----------------------------------------------------------------------------
+# Auth routes
+# ----------------------------------------------------------------------------
+@api_router.post("/auth/register")
+async def register(body: RegisterBody):
+    email = body.email.lower()
+    if await db.users.find_one({"email": email}):
+        raise HTTPException(status_code=400, detail="Email sudah terdaftar")
+    count = await db.users.count_documents({})
+    doc = {
+        "name": body.name, "email": email,
+        "password_hash": hash_password(body.password),
+        "role": body.role if body.role in {"owner", "direksi", "manager", "staff"} else "staff",
+        "department": body.department, "position": body.position,
+        "phone": body.phone,
+        "employee_id": f"EMP-{count + 1:04d}",
+        "face_descriptor": None,
+        "created_at": now_iso(),
+    }
+    res = await db.users.insert_one(doc)
+    doc["_id"] = res.inserted_id
+    token = create_access_token(str(res.inserted_id), email, doc["role"])
+    return {"token": token, "user": public_user(doc)}
+
+
+@api_router.post("/auth/login")
+async def login(body: LoginBody):
+    email = body.email.lower()
+    user = await db.users.find_one({"email": email})
+    if not user or not verify_password(body.password, user["password_hash"]):
+        raise HTTPException(status_code=401, detail="Email atau password salah")
+    token = create_access_token(str(user["_id"]), email, user["role"])
+    return {"token": token, "user": public_user(user)}
+
+
+@api_router.get("/auth/me")
+async def me(user: dict = Depends(get_current_user)):
+    return public_user(user)
+
+
+# ----------------------------------------------------------------------------
+# Face enrollment
+# ----------------------------------------------------------------------------
+@api_router.post("/face/enroll")
+async def enroll_face(body: FaceEnrollBody, user: dict = Depends(get_current_user)):
+    if len(body.descriptor) != 128:
+        raise HTTPException(status_code=400, detail="Descriptor wajah tidak valid")
+    await db.users.update_one({"_id": user["_id"]},
+                              {"$set": {"face_descriptor": body.descriptor}})
+    return {"ok": True, "message": "Wajah berhasil didaftarkan"}
+
+
+# ----------------------------------------------------------------------------
+# Offices
+# ----------------------------------------------------------------------------
+@api_router.get("/offices")
+async def list_offices(user: dict = Depends(get_current_user)):
+    offices = await db.offices.find().to_list(100)
+    return [{"id": str(o["_id"]), "name": o["name"], "lat": o["lat"],
+             "lng": o["lng"], "radius_m": o["radius_m"], "qr_code": o["qr_code"]}
+            for o in offices]
+
+
+@api_router.post("/offices")
+async def create_office(body: OfficeBody, user: dict = Depends(require_roles(MANAGE_ROLES))):
+    doc = body.model_dump()
+    doc["qr_code"] = f"OFFICE-{uuid.uuid4().hex[:10].upper()}"
+    res = await db.offices.insert_one(doc)
+    doc["_id"] = res.inserted_id
+    return {"id": str(res.inserted_id), **{k: doc[k] for k in ("name", "lat", "lng", "radius_m", "qr_code")}}
+
+
+@api_router.put("/offices/{office_id}")
+async def update_office(office_id: str, body: OfficeBody, user: dict = Depends(require_roles(MANAGE_ROLES))):
+    await db.offices.update_one({"_id": ObjectId(office_id)}, {"$set": body.model_dump()})
+    return {"ok": True}
+
+
+@api_router.delete("/offices/{office_id}")
+async def delete_office(office_id: str, user: dict = Depends(require_roles(MANAGE_ROLES))):
+    await db.offices.delete_one({"_id": ObjectId(office_id)})
+    return {"ok": True}
+
+
+async def validate_geofence(lat: float, lng: float):
+    offices = await db.offices.find().to_list(100)
+    if not offices:
+        raise HTTPException(status_code=400, detail="Belum ada lokasi kantor yang dikonfigurasi")
+    best = None
+    for o in offices:
+        d = haversine_m(lat, lng, o["lat"], o["lng"])
+        if best is None or d < best[1]:
+            best = (o, d)
+    office, dist = best
+    within = dist <= office["radius_m"]
+    return office, dist, within
+
+
+# ----------------------------------------------------------------------------
+# Attendance
+# ----------------------------------------------------------------------------
+def att_public(a: dict, user: Optional[dict] = None) -> dict:
+    out = {
+        "id": str(a["_id"]),
+        "user_id": a["user_id"],
+        "date": a["date"],
+        "check_in": a.get("check_in"),
+        "check_out": a.get("check_out"),
+        "status": a.get("status"),
+        "method": a.get("method"),
+        "office_name": a.get("office_name"),
+        "distance_m": a.get("distance_m"),
+        "within_geofence": a.get("within_geofence"),
+    }
+    if user:
+        out.update({"name": user.get("name"), "department": user.get("department"),
+                    "position": user.get("position"), "employee_id": user.get("employee_id"),
+                    "role": user.get("role")})
+    return out
+
+
+@api_router.post("/attendance/check-in")
+async def check_in(body: CheckInBody, user: dict = Depends(get_current_user)):
+    date = today_str()
+    existing = await db.attendance.find_one({"user_id": str(user["_id"]), "date": date})
+    if existing and existing.get("check_in"):
+        raise HTTPException(status_code=400, detail="Anda sudah melakukan check-in hari ini")
+
+    office, dist, within = await validate_geofence(body.lat, body.lng)
+    if not within:
+        raise HTTPException(status_code=400,
+                            detail=f"Anda berada {int(dist)}m dari {office['name']} (radius {office['radius_m']}m). Mendekatlah ke kantor.")
+
+    # Verify identity by method
+    if body.method == "face":
+        stored = user.get("face_descriptor")
+        if not stored:
+            raise HTTPException(status_code=400, detail="Wajah belum didaftarkan. Daftarkan wajah Anda dulu.")
+        if not body.descriptor or len(body.descriptor) != 128:
+            raise HTTPException(status_code=400, detail="Data wajah tidak terbaca, coba lagi")
+        d = euclidean(stored, body.descriptor)
+        if d > FACE_MATCH_THRESHOLD:
+            raise HTTPException(status_code=400, detail="Wajah tidak cocok dengan data terdaftar")
+    elif body.method == "qr":
+        if not body.qr_code or body.qr_code != office["qr_code"]:
+            raise HTTPException(status_code=400, detail="QR Code tidak valid untuk lokasi ini")
+    else:
+        raise HTTPException(status_code=400, detail="Metode absensi tidak dikenal")
+
+    check_in_dt = datetime.now(timezone.utc)
+    status = compute_status(check_in_dt)
+    doc = {
+        "user_id": str(user["_id"]),
+        "date": date,
+        "check_in": check_in_dt.isoformat(),
+        "check_out": None,
+        "status": status,
+        "method": body.method,
+        "office_name": office["name"],
+        "distance_m": int(dist),
+        "within_geofence": True,
+        "lat": body.lat, "lng": body.lng,
+    }
+    await db.attendance.insert_one(doc)
+    doc["_id"] = "tmp"
+    return att_public(doc, user)
+
+
+@api_router.post("/attendance/check-out")
+async def check_out(body: CheckOutBody, user: dict = Depends(get_current_user)):
+    date = today_str()
+    rec = await db.attendance.find_one({"user_id": str(user["_id"]), "date": date})
+    if not rec or not rec.get("check_in"):
+        raise HTTPException(status_code=400, detail="Anda belum check-in hari ini")
+    if rec.get("check_out"):
+        raise HTTPException(status_code=400, detail="Anda sudah check-out hari ini")
+    await db.attendance.update_one({"_id": rec["_id"]},
+                                   {"$set": {"check_out": now_iso()}})
+    rec["check_out"] = now_iso()
+    return att_public(rec, user)
+
+
+@api_router.get("/attendance/today")
+async def attendance_today(user: dict = Depends(get_current_user)):
+    rec = await db.attendance.find_one({"user_id": str(user["_id"]), "date": today_str()})
+    if not rec:
+        return {"checked_in": False}
+    return {"checked_in": True, **att_public(rec, user)}
+
+
+@api_router.get("/attendance/me")
+async def my_attendance(user: dict = Depends(get_current_user), limit: int = 60):
+    recs = await db.attendance.find({"user_id": str(user["_id"])}).sort("date", -1).to_list(limit)
+    return [att_public(r, user) for r in recs]
+
+
+@api_router.get("/attendance")
+async def all_attendance(date: Optional[str] = Query(None),
+                         user: dict = Depends(require_roles(MONITOR_ROLES))):
+    date = date or today_str()
+    users = await db.users.find().to_list(1000)
+    recs = await db.attendance.find({"date": date}).to_list(2000)
+    rec_by_user = {r["user_id"]: r for r in recs}
+    rows = []
+    for u in users:
+        uid = str(u["_id"])
+        r = rec_by_user.get(uid)
+        if r:
+            rows.append(att_public(r, u))
+        else:
+            rows.append({"id": None, "user_id": uid, "date": date, "check_in": None,
+                         "check_out": None, "status": "absent", "method": None,
+                         "office_name": None, "distance_m": None, "within_geofence": None,
+                         "name": u.get("name"), "department": u.get("department"),
+                         "position": u.get("position"), "employee_id": u.get("employee_id"),
+                         "role": u.get("role")})
+    return rows
+
+
+# ----------------------------------------------------------------------------
+# Dashboard stats
+# ----------------------------------------------------------------------------
+@api_router.get("/dashboard/stats")
+async def dashboard_stats(user: dict = Depends(require_roles(MONITOR_ROLES))):
+    date = today_str()
+    users = await db.users.find().to_list(1000)
+    total = len(users)
+    recs = await db.attendance.find({"date": date}).to_list(2000)
+    rec_by_user = {r["user_id"]: r for r in recs}
+
+    present = late = 0
+    dept_map = {}
+    for u in users:
+        r = rec_by_user.get(str(u["_id"]))
+        st = r["status"] if r else "absent"
+        if st == "present":
+            present += 1
+        elif st == "late":
+            late += 1
+        dept = u.get("department") or "Umum"
+        dept_map.setdefault(dept, {"department": dept, "total": 0, "hadir": 0})
+        dept_map[dept]["total"] += 1
+        if st in ("present", "late"):
+            dept_map[dept]["hadir"] += 1
+    absent = total - present - late
+
+    # 7-day trend
+    trend = []
+    for i in range(6, -1, -1):
+        d = (datetime.now(TZ) - timedelta(days=i)).strftime("%Y-%m-%d")
+        day_recs = await db.attendance.find({"date": d}).to_list(2000)
+        p = sum(1 for r in day_recs if r.get("status") == "present")
+        l = sum(1 for r in day_recs if r.get("status") == "late")
+        trend.append({"date": d, "label": (datetime.now(TZ) - timedelta(days=i)).strftime("%a"),
+                      "present": p, "late": l, "total": p + l})
+
+    # recent activity
+    recent = sorted([r for r in recs if r.get("check_in")],
+                    key=lambda r: r["check_in"], reverse=True)[:8]
+    user_by_id = {str(u["_id"]): u for u in users}
+    recent_out = [att_public(r, user_by_id.get(r["user_id"])) for r in recent]
+
+    return {
+        "date": date,
+        "total": total, "present": present, "late": late, "absent": absent,
+        "attendance_rate": round((present + late) / total * 100, 1) if total else 0,
+        "departments": list(dept_map.values()),
+        "trend": trend,
+        "recent": recent_out,
+    }
+
+
+# ----------------------------------------------------------------------------
+# Employees (management)
+# ----------------------------------------------------------------------------
+@api_router.get("/employees")
+async def list_employees(user: dict = Depends(require_roles(MONITOR_ROLES))):
+    users = await db.users.find().sort("created_at", 1).to_list(1000)
+    return [public_user(u) for u in users]
+
+
+@api_router.post("/employees")
+async def create_employee(body: EmployeeBody, user: dict = Depends(require_roles(MANAGE_ROLES))):
+    email = body.email.lower()
+    if await db.users.find_one({"email": email}):
+        raise HTTPException(status_code=400, detail="Email sudah terdaftar")
+    count = await db.users.count_documents({})
+    doc = {
+        "name": body.name, "email": email,
+        "password_hash": hash_password(body.password),
+        "role": body.role if body.role in {"owner", "direksi", "manager", "staff"} else "staff",
+        "department": body.department, "position": body.position, "phone": body.phone,
+        "employee_id": f"EMP-{count + 1:04d}", "face_descriptor": None,
+        "created_at": now_iso(),
+    }
+    res = await db.users.insert_one(doc)
+    doc["_id"] = res.inserted_id
+    return public_user(doc)
+
+
+@api_router.put("/employees/{emp_id}")
+async def update_employee(emp_id: str, body: EmployeeUpdate, user: dict = Depends(require_roles(MANAGE_ROLES))):
+    update = {k: v for k, v in body.model_dump().items() if v is not None}
+    if "password" in update:
+        update["password_hash"] = hash_password(update.pop("password"))
+    if update:
+        await db.users.update_one({"_id": ObjectId(emp_id)}, {"$set": update})
+    u = await db.users.find_one({"_id": ObjectId(emp_id)})
+    return public_user(u)
+
+
+@api_router.delete("/employees/{emp_id}")
+async def delete_employee(emp_id: str, user: dict = Depends(require_roles(MANAGE_ROLES))):
+    if str(user["_id"]) == emp_id:
+        raise HTTPException(status_code=400, detail="Tidak dapat menghapus akun sendiri")
+    await db.users.delete_one({"_id": ObjectId(emp_id)})
+    await db.attendance.delete_many({"user_id": emp_id})
+    return {"ok": True}
+
+
+# ----------------------------------------------------------------------------
+# App wiring + seed
+# ----------------------------------------------------------------------------
 app.include_router(api_router)
-
 app.add_middleware(
     CORSMiddleware,
-    allow_credentials=True,
+    allow_credentials=False,
     allow_origins=os.environ.get('CORS_ORIGINS', '*').split(','),
     allow_methods=["*"],
     allow_headers=["*"],
 )
 
-# Configure logging
-logging.basicConfig(
-    level=logging.INFO,
-    format='%(asctime)s - %(name)s - %(levelname)s - %(message)s'
-)
-logger = logging.getLogger(__name__)
+
+async def seed():
+    await db.users.create_index("email", unique=True)
+    await db.attendance.create_index([("user_id", 1), ("date", 1)])
+
+    admin_email = os.environ["ADMIN_EMAIL"]
+    admin_password = os.environ["ADMIN_PASSWORD"]
+
+    demo_users = [
+        {"name": "Budi Santoso", "email": admin_email, "role": "owner",
+         "department": "Direksi", "position": "Owner / CEO"},
+        {"name": "Siti Rahmawati", "email": "direksi@company.com", "role": "direksi",
+         "department": "Direksi", "position": "Direktur Operasional"},
+        {"name": "Agus Wijaya", "email": "manager@company.com", "role": "manager",
+         "department": "Penjualan", "position": "Manager Penjualan"},
+        {"name": "Dewi Lestari", "email": "dewi@company.com", "role": "staff",
+         "department": "Penjualan", "position": "Sales Executive"},
+        {"name": "Rizki Pratama", "email": "rizki@company.com", "role": "staff",
+         "department": "Keuangan", "position": "Staff Keuangan"},
+        {"name": "Nina Putri", "email": "nina@company.com", "role": "staff",
+         "department": "HRD", "position": "Staff HRD"},
+        {"name": "Eko Saputra", "email": "eko@company.com", "role": "staff",
+         "department": "Operasional", "position": "Teknisi"},
+    ]
+    for i, d in enumerate(demo_users):
+        pwd = admin_password if d["email"] == admin_email else "password123"
+        existing = await db.users.find_one({"email": d["email"]})
+        if existing is None:
+            await db.users.insert_one({
+                **d, "password_hash": hash_password(pwd),
+                "phone": None, "employee_id": f"EMP-{i + 1:04d}",
+                "face_descriptor": None, "created_at": now_iso(),
+            })
+        elif not verify_password(pwd, existing["password_hash"]):
+            await db.users.update_one({"email": d["email"]},
+                                      {"$set": {"password_hash": hash_password(pwd)}})
+
+    if await db.offices.count_documents({}) == 0:
+        await db.offices.insert_one({
+            "name": "Kantor Pusat Jakarta", "lat": -6.208763, "lng": 106.845599,
+            "radius_m": 250, "qr_code": "OFFICE-HQJKT00001",
+        })
+
+    # Seed historical attendance for the past 7 days (for charts) if empty
+    if await db.attendance.count_documents({}) == 0:
+        import random
+        users = await db.users.find({"role": {"$in": ["manager", "staff", "direksi"]}}).to_list(100)
+        for i in range(7, 0, -1):
+            d = (datetime.now(TZ) - timedelta(days=i))
+            date = d.strftime("%Y-%m-%d")
+            for u in users:
+                if random.random() < 0.12:
+                    continue  # absent
+                late = random.random() < 0.2
+                hour = 9 if late else 8
+                minute = random.randint(5, 40) if late else random.randint(0, 55)
+                ci = d.replace(hour=hour, minute=minute, second=0, microsecond=0).astimezone(timezone.utc)
+                co = d.replace(hour=17, minute=random.randint(0, 59), second=0, microsecond=0).astimezone(timezone.utc)
+                await db.attendance.insert_one({
+                    "user_id": str(u["_id"]), "date": date,
+                    "check_in": ci.isoformat(), "check_out": co.isoformat(),
+                    "status": "late" if late else "present",
+                    "method": random.choice(["face", "qr"]),
+                    "office_name": "Kantor Pusat Jakarta", "distance_m": random.randint(5, 120),
+                    "within_geofence": True, "lat": -6.2087, "lng": 106.8456,
+                })
+
+    logger.info("Seed complete.")
+    creds = """# Test Credentials
+
+All demo accounts use password: **password123**
+
+| Role | Email | Password |
+|------|-------|----------|
+| Owner | owner@company.com | password123 |
+| Direksi | direksi@company.com | password123 |
+| Manager | manager@company.com | password123 |
+| Staff | dewi@company.com | password123 |
+| Staff | rizki@company.com | password123 |
+| Staff | nina@company.com | password123 |
+| Staff | eko@company.com | password123 |
+
+## Auth endpoints
+- POST /api/auth/login  body {email, password} -> {token, user}
+- POST /api/auth/register
+- GET  /api/auth/me  (Bearer token)
+
+## Notes
+- Frontend stores token in localStorage and sends `Authorization: Bearer <token>`.
+- Monitoring (dashboard/employees/all-attendance): roles owner, direksi, manager.
+- Management (create/update employees & offices): roles owner, direksi.
+- Default office: "Kantor Pusat Jakarta" lat -6.208763 lng 106.845599 radius 250m, QR: OFFICE-HQJKT00001
+"""
+    try:
+        Path("/app/memory/test_credentials.md").write_text(creds)
+    except Exception as e:
+        logger.warning(f"could not write creds: {e}")
+
+
+@app.on_event("startup")
+async def on_startup():
+    await seed()
+
 
 @app.on_event("shutdown")
 async def shutdown_db_client():

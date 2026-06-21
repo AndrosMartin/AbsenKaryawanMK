@@ -78,6 +78,35 @@ webpackConfig.devServer = (devServerConfig) => {
     };
   }
 
+  // Compatibility: webpack-dev-server v5 removed onBeforeSetupMiddleware /
+  // onAfterSetupMiddleware (still emitted by react-scripts 5). Strip them and
+  // bridge to setupMiddlewares so the dev server boots against wds v5.
+  const onBefore = devServerConfig.onBeforeSetupMiddleware;
+  const onAfter = devServerConfig.onAfterSetupMiddleware;
+  delete devServerConfig.onBeforeSetupMiddleware;
+  delete devServerConfig.onAfterSetupMiddleware;
+  if (onBefore || onAfter) {
+    const prev = devServerConfig.setupMiddlewares;
+    devServerConfig.setupMiddlewares = (middlewares, devServer) => {
+      if (onBefore) onBefore(devServer);
+      if (prev) middlewares = prev(middlewares, devServer);
+      if (onAfter) onAfter(devServer);
+      return middlewares;
+    };
+  }
+  devServerConfig.allowedHosts = "all";
+
+  // webpack-dev-server v5 replaced `https` with `server`.
+  if (typeof devServerConfig.https !== "undefined") {
+    const httpsOpt = devServerConfig.https;
+    delete devServerConfig.https;
+    if (httpsOpt) {
+      devServerConfig.server = typeof httpsOpt === "object"
+        ? { type: "https", options: httpsOpt }
+        : "https";
+    }
+  }
+
   return devServerConfig;
 };
 
