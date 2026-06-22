@@ -50,7 +50,7 @@ async function navigate(route) {
   const content = document.getElementById("app-content");
   content.innerHTML = `<div class="flex items-center justify-center py-32 text-slate-400"><i class="ph ph-circle-notch spin text-3xl"></i></div>`;
   try {
-    const mod = await import(`/modules/${route}.js?v=6`);
+    const mod = await import(`/modules/${route}.js?v=7`);
     content.innerHTML = "";
     await mod.render(content, ctx);
   } catch (e) {
@@ -91,6 +91,10 @@ function renderShell() {
         </div>
       </div>
       <nav class="flex-1 px-3 py-5 space-y-1 overflow-y-auto">${navHtml}</nav>
+      <a href="/Manual_Book_AbsensiPro.pdf" target="_blank" rel="noopener" data-testid="manual-link"
+         class="mx-3 mb-2 flex items-center gap-3 px-3 py-2.5 rounded-lg text-sm font-medium text-slate-300 hover:text-gold border border-white/10 hover:border-gold/40 transition-colors">
+        <i class="ph ph-book-open-text text-lg"></i><span>Manual Book (PDF)</span>
+      </a>
       <div class="p-3 border-t border-white/10">
         <div class="flex items-center gap-3 px-3 py-2">
           <div class="h-9 w-9 rounded-full bg-gold/20 text-gold ring-1 ring-gold/40 flex items-center justify-center text-xs font-semibold">${ui.initials(u.name)}</div>
@@ -240,7 +244,7 @@ function startClock() {
 
 async function renderLogin() {
   document.getElementById("app").innerHTML = "";
-  const mod = await import("/modules/login.js?v=6");
+  const mod = await import("/modules/login.js?v=7");
   await mod.render(document.getElementById("app"), {
     api, ui,
     onLogin: async (token, user) => {
