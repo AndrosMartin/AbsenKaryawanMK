@@ -21,6 +21,7 @@ export const MANAGE_ROLES = ["owner", "direksi"];
 export const HR_ROLES = ["owner", "direksi", "hrd"];
 export const APPROVER_ROLES = ["owner", "direksi"];
 export const HRD_ASSIGNABLE_ROLES = ["manager", "hrd", "staff"];
+export const ALL_USERS = ["owner", "direksi", "manager", "hrd", "staff"];
 
 export function h(html) {
   const t = document.createElement("template");

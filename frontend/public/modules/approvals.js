@@ -1,7 +1,7 @@
 // Persetujuan perubahan karyawan (HRD mengajukan, Direksi/Owner menyetujui)
 export async function render(root, ctx) {
   const { ui } = ctx;
-  const isApprover = ["owner", "direksi"].includes(ctx.user.role);
+  const isApprover = ui.APPROVER_ROLES.includes(ctx.user.role);
   let reqs = [];
 
   const ACTION = {

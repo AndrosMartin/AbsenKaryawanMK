@@ -3,14 +3,14 @@ import * as ui from "/js/ui.js";
 
 const NAV = [
   { id: "dashboard", label: "Dashboard", icon: "ph-chart-line-up", roles: ui.MONITOR_ROLES },
-  { id: "checkin", label: "Absensi", icon: "ph-fingerprint", roles: ["owner", "direksi", "manager", "staff"] },
-  { id: "history", label: "Riwayat Saya", icon: "ph-clock-counter-clockwise", roles: ["owner", "direksi", "manager", "staff"] },
+  { id: "checkin", label: "Absensi", icon: "ph-fingerprint", roles: ui.ALL_USERS },
+  { id: "history", label: "Riwayat Saya", icon: "ph-clock-counter-clockwise", roles: ui.ALL_USERS },
   { id: "monitoring", label: "Monitoring", icon: "ph-monitor", roles: ui.MONITOR_ROLES },
   { id: "employees", label: "Karyawan", icon: "ph-users-three", roles: ui.MONITOR_ROLES },
   { id: "approvals", label: "Persetujuan", icon: "ph-seal-check", roles: ui.HR_ROLES },
   { id: "offices", label: "Lokasi Kantor", icon: "ph-map-pin", roles: ui.MANAGE_ROLES },
-  { id: "face", label: "Wajah Saya", icon: "ph-user-focus", roles: ["owner", "direksi", "manager", "staff"] },
-  { id: "profile", label: "Profil", icon: "ph-user-circle", roles: ["owner", "direksi", "manager", "staff"] },
+  { id: "face", label: "Wajah Saya", icon: "ph-user-focus", roles: ui.ALL_USERS },
+  { id: "profile", label: "Profil", icon: "ph-user-circle", roles: ui.ALL_USERS },
 ];
 
 const state = { user: null, currentStream: null };
@@ -50,7 +50,7 @@ async function navigate(route) {
   const content = document.getElementById("app-content");
   content.innerHTML = `<div class="flex items-center justify-center py-32 text-slate-400"><i class="ph ph-circle-notch spin text-3xl"></i></div>`;
   try {
-    const mod = await import(`/modules/${route}.js?v=4`);
+    const mod = await import(`/modules/${route}.js?v=5`);
     content.innerHTML = "";
     await mod.render(content, ctx);
   } catch (e) {
@@ -150,7 +150,7 @@ function startClock() {
 
 async function renderLogin() {
   document.getElementById("app").innerHTML = "";
-  const mod = await import("/modules/login.js?v=4");
+  const mod = await import("/modules/login.js?v=5");
   await mod.render(document.getElementById("app"), {
     api, ui,
     onLogin: async (token, user) => {

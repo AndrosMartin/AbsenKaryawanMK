@@ -2,7 +2,7 @@
 export async function render(root, ctx) {
   const { ui } = ctx;
   const role = ctx.user.role;
-  const canManage = ["owner", "direksi", "hrd"].includes(role);
+  const canManage = ui.HR_ROLES.includes(role);
   const isHrd = role === "hrd";
   const roleOptions = isHrd ? ["staff", "manager", "hrd"] : ["staff", "manager", "hrd", "direksi", "owner"];
   let list = [];

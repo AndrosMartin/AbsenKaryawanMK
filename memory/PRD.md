@@ -34,6 +34,11 @@ Play CDN native, modul dipanggil dinamis dalam 1 index. Desain dashboard profesi
 - Riwayat pribadi, Profil.
 - Verified: backend 31/31 pytest, frontend happy-paths 100% (testing agent iteration_1).
 
+## Implemented (2026-06-22)
+- Code-review fixes: `secrets` untuk seed, refactor kompleksitas (check_in/dashboard/seed), perbaikan React hook deps, hapus console statements, patch craco wds v5.
+- **Role HRD + workflow persetujuan**: HRD bisa ajukan CRUD karyawan (tidak bisa set role owner/direksi); perubahan masuk antrian `employee_requests` (pending) dan baru berlaku setelah disetujui Owner/Direksi. Owner/Direksi tetap langsung. Endpoint: `GET /api/employee-requests`, `/approve`, `/reject`, `/pending-count`. Halaman frontend "Persetujuan" (approvals.js). Seed user hrd@company.com.
+- Verified: backend curl + pytest 31/31; frontend testing agent iteration_2 (HRD nav bug ditemukan & diperbaiki).
+
 ## Backlog (next)
 - P1: Export laporan (CSV/PDF) kehadiran per periode.
 - P1: Jam kerja/shift & toleransi keterlambatan yang dapat dikonfigurasi via UI.
