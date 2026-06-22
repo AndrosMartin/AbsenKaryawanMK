@@ -18,6 +18,7 @@ import math
 import uuid
 import bcrypt
 import jwt
+import secrets
 
 # ----------------------------------------------------------------------------
 # Setup
@@ -301,6 +302,23 @@ async def validate_geofence(lat: float, lng: float):
     return office, dist, within
 
 
+def verify_attendance_identity(user: dict, body: "CheckInBody", office: dict) -> None:
+    """Raise HTTPException if the chosen verification method fails."""
+    if body.method == "face":
+        stored = user.get("face_descriptor")
+        if not stored:
+            raise HTTPException(status_code=400, detail="Wajah belum didaftarkan. Daftarkan wajah Anda dulu.")
+        if not body.descriptor or len(body.descriptor) != 128:
+            raise HTTPException(status_code=400, detail="Data wajah tidak terbaca, coba lagi")
+        if euclidean(stored, body.descriptor) > FACE_MATCH_THRESHOLD:
+            raise HTTPException(status_code=400, detail="Wajah tidak cocok dengan data terdaftar")
+    elif body.method == "qr":
+        if not body.qr_code or body.qr_code != office["qr_code"]:
+            raise HTTPException(status_code=400, detail="QR Code tidak valid untuk lokasi ini")
+    else:
+        raise HTTPException(status_code=400, detail="Metode absensi tidak dikenal")
+
+
 # ----------------------------------------------------------------------------
 # Attendance
 # ----------------------------------------------------------------------------
@@ -336,21 +354,7 @@ async def check_in(body: CheckInBody, user: dict = Depends(get_current_user)):
         raise HTTPException(status_code=400,
                             detail=f"Anda berada {int(dist)}m dari {office['name']} (radius {office['radius_m']}m). Mendekatlah ke kantor.")
 
-    # Verify identity by method
-    if body.method == "face":
-        stored = user.get("face_descriptor")
-        if not stored:
-            raise HTTPException(status_code=400, detail="Wajah belum didaftarkan. Daftarkan wajah Anda dulu.")
-        if not body.descriptor or len(body.descriptor) != 128:
-            raise HTTPException(status_code=400, detail="Data wajah tidak terbaca, coba lagi")
-        d = euclidean(stored, body.descriptor)
-        if d > FACE_MATCH_THRESHOLD:
-            raise HTTPException(status_code=400, detail="Wajah tidak cocok dengan data terdaftar")
-    elif body.method == "qr":
-        if not body.qr_code or body.qr_code != office["qr_code"]:
-            raise HTTPException(status_code=400, detail="QR Code tidak valid untuk lokasi ini")
-    else:
-        raise HTTPException(status_code=400, detail="Metode absensi tidak dikenal")
+    verify_attendance_identity(user, body, office)
 
     check_in_dt = datetime.now(timezone.utc)
     status = compute_status(check_in_dt)
@@ -425,14 +429,7 @@ async def all_attendance(date: Optional[str] = Query(None),
 # ----------------------------------------------------------------------------
 # Dashboard stats
 # ----------------------------------------------------------------------------
-@api_router.get("/dashboard/stats")
-async def dashboard_stats(user: dict = Depends(require_roles(MONITOR_ROLES))):
-    date = today_str()
-    users = await db.users.find().to_list(1000)
-    total = len(users)
-    recs = await db.attendance.find({"date": date}).to_list(2000)
-    rec_by_user = {r["user_id"]: r for r in recs}
-
+def _summarize_today(users: list, rec_by_user: dict) -> dict:
     present = late = 0
     dept_map = {}
     for u in users:
@@ -447,31 +444,47 @@ async def dashboard_stats(user: dict = Depends(require_roles(MONITOR_ROLES))):
         dept_map[dept]["total"] += 1
         if st in ("present", "late"):
             dept_map[dept]["hadir"] += 1
-    absent = total - present - late
+    return {"present": present, "late": late, "departments": list(dept_map.values())}
 
-    # 7-day trend
+
+async def _seven_day_trend() -> list:
     trend = []
     for i in range(6, -1, -1):
-        d = (datetime.now(TZ) - timedelta(days=i)).strftime("%Y-%m-%d")
-        day_recs = await db.attendance.find({"date": d}).to_list(2000)
+        day = datetime.now(TZ) - timedelta(days=i)
+        date = day.strftime("%Y-%m-%d")
+        day_recs = await db.attendance.find({"date": date}).to_list(2000)
         p = sum(1 for r in day_recs if r.get("status") == "present")
         l = sum(1 for r in day_recs if r.get("status") == "late")
-        trend.append({"date": d, "label": (datetime.now(TZ) - timedelta(days=i)).strftime("%a"),
-                      "present": p, "late": l, "total": p + l})
+        trend.append({"date": date, "label": day.strftime("%a"), "present": p, "late": l, "total": p + l})
+    return trend
 
-    # recent activity
+
+def _recent_activity(recs: list, users: list) -> list:
     recent = sorted([r for r in recs if r.get("check_in")],
                     key=lambda r: r["check_in"], reverse=True)[:8]
     user_by_id = {str(u["_id"]): u for u in users}
-    recent_out = [att_public(r, user_by_id.get(r["user_id"])) for r in recent]
+    return [att_public(r, user_by_id.get(r["user_id"])) for r in recent]
+
+
+@api_router.get("/dashboard/stats")
+async def dashboard_stats(user: dict = Depends(require_roles(MONITOR_ROLES))):
+    date = today_str()
+    users = await db.users.find().to_list(1000)
+    total = len(users)
+    recs = await db.attendance.find({"date": date}).to_list(2000)
+    rec_by_user = {r["user_id"]: r for r in recs}
+
+    summary = _summarize_today(users, rec_by_user)
+    present, late = summary["present"], summary["late"]
+    absent = total - present - late
 
     return {
         "date": date,
         "total": total, "present": present, "late": late, "absent": absent,
         "attendance_rate": round((present + late) / total * 100, 1) if total else 0,
-        "departments": list(dept_map.values()),
-        "trend": trend,
-        "recent": recent_out,
+        "departments": summary["departments"],
+        "trend": await _seven_day_trend(),
+        "recent": _recent_activity(recs, users),
     }
 
 
@@ -536,74 +549,24 @@ app.add_middleware(
 )
 
 
-async def seed():
-    await db.users.create_index("email", unique=True)
-    await db.attendance.create_index([("user_id", 1), ("date", 1)])
+DEMO_USERS = [
+    {"name": "Budi Santoso", "email": None, "role": "owner",
+     "department": "Direksi", "position": "Owner / CEO"},
+    {"name": "Siti Rahmawati", "email": "direksi@company.com", "role": "direksi",
+     "department": "Direksi", "position": "Direktur Operasional"},
+    {"name": "Agus Wijaya", "email": "manager@company.com", "role": "manager",
+     "department": "Penjualan", "position": "Manager Penjualan"},
+    {"name": "Dewi Lestari", "email": "dewi@company.com", "role": "staff",
+     "department": "Penjualan", "position": "Sales Executive"},
+    {"name": "Rizki Pratama", "email": "rizki@company.com", "role": "staff",
+     "department": "Keuangan", "position": "Staff Keuangan"},
+    {"name": "Nina Putri", "email": "nina@company.com", "role": "staff",
+     "department": "HRD", "position": "Staff HRD"},
+    {"name": "Eko Saputra", "email": "eko@company.com", "role": "staff",
+     "department": "Operasional", "position": "Teknisi"},
+]
 
-    admin_email = os.environ["ADMIN_EMAIL"]
-    admin_password = os.environ["ADMIN_PASSWORD"]
-
-    demo_users = [
-        {"name": "Budi Santoso", "email": admin_email, "role": "owner",
-         "department": "Direksi", "position": "Owner / CEO"},
-        {"name": "Siti Rahmawati", "email": "direksi@company.com", "role": "direksi",
-         "department": "Direksi", "position": "Direktur Operasional"},
-        {"name": "Agus Wijaya", "email": "manager@company.com", "role": "manager",
-         "department": "Penjualan", "position": "Manager Penjualan"},
-        {"name": "Dewi Lestari", "email": "dewi@company.com", "role": "staff",
-         "department": "Penjualan", "position": "Sales Executive"},
-        {"name": "Rizki Pratama", "email": "rizki@company.com", "role": "staff",
-         "department": "Keuangan", "position": "Staff Keuangan"},
-        {"name": "Nina Putri", "email": "nina@company.com", "role": "staff",
-         "department": "HRD", "position": "Staff HRD"},
-        {"name": "Eko Saputra", "email": "eko@company.com", "role": "staff",
-         "department": "Operasional", "position": "Teknisi"},
-    ]
-    for i, d in enumerate(demo_users):
-        pwd = admin_password if d["email"] == admin_email else "password123"
-        existing = await db.users.find_one({"email": d["email"]})
-        if existing is None:
-            await db.users.insert_one({
-                **d, "password_hash": hash_password(pwd),
-                "phone": None, "employee_id": f"EMP-{i + 1:04d}",
-                "face_descriptor": None, "created_at": now_iso(),
-            })
-        elif not verify_password(pwd, existing["password_hash"]):
-            await db.users.update_one({"email": d["email"]},
-                                      {"$set": {"password_hash": hash_password(pwd)}})
-
-    if await db.offices.count_documents({}) == 0:
-        await db.offices.insert_one({
-            "name": "Kantor Pusat Jakarta", "lat": -6.208763, "lng": 106.845599,
-            "radius_m": 250, "qr_code": "OFFICE-HQJKT00001",
-        })
-
-    # Seed historical attendance for the past 7 days (for charts) if empty
-    if await db.attendance.count_documents({}) == 0:
-        import random
-        users = await db.users.find({"role": {"$in": ["manager", "staff", "direksi"]}}).to_list(100)
-        for i in range(7, 0, -1):
-            d = (datetime.now(TZ) - timedelta(days=i))
-            date = d.strftime("%Y-%m-%d")
-            for u in users:
-                if random.random() < 0.12:
-                    continue  # absent
-                late = random.random() < 0.2
-                hour = 9 if late else 8
-                minute = random.randint(5, 40) if late else random.randint(0, 55)
-                ci = d.replace(hour=hour, minute=minute, second=0, microsecond=0).astimezone(timezone.utc)
-                co = d.replace(hour=17, minute=random.randint(0, 59), second=0, microsecond=0).astimezone(timezone.utc)
-                await db.attendance.insert_one({
-                    "user_id": str(u["_id"]), "date": date,
-                    "check_in": ci.isoformat(), "check_out": co.isoformat(),
-                    "status": "late" if late else "present",
-                    "method": random.choice(["face", "qr"]),
-                    "office_name": "Kantor Pusat Jakarta", "distance_m": random.randint(5, 120),
-                    "within_geofence": True, "lat": -6.2087, "lng": 106.8456,
-                })
-
-    logger.info("Seed complete.")
-    creds = """# Test Credentials
+TEST_CREDENTIALS_DOC = """# Test Credentials
 
 All demo accounts use password: **password123**
 
@@ -628,10 +591,82 @@ All demo accounts use password: **password123**
 - Management (create/update employees & offices): roles owner, direksi.
 - Default office: "Kantor Pusat Jakarta" lat -6.208763 lng 106.845599 radius 250m, QR: OFFICE-HQJKT00001
 """
+
+
+async def _ensure_indexes():
+    await db.users.create_index("email", unique=True)
+    await db.attendance.create_index([("user_id", 1), ("date", 1)])
+
+
+async def _seed_users(admin_email: str, admin_password: str):
+    for i, d in enumerate(DEMO_USERS):
+        email = admin_email if d["email"] is None else d["email"]
+        pwd = admin_password if email == admin_email else "password123"
+        existing = await db.users.find_one({"email": email})
+        if existing is None:
+            await db.users.insert_one({
+                **{k: v for k, v in d.items() if k != "email"}, "email": email,
+                "password_hash": hash_password(pwd),
+                "phone": None, "employee_id": f"EMP-{i + 1:04d}",
+                "face_descriptor": None, "created_at": now_iso(),
+            })
+        elif not verify_password(pwd, existing["password_hash"]):
+            await db.users.update_one({"email": email},
+                                      {"$set": {"password_hash": hash_password(pwd)}})
+
+
+async def _seed_office():
+    if await db.offices.count_documents({}) == 0:
+        await db.offices.insert_one({
+            "name": "Kantor Pusat Jakarta", "lat": -6.208763, "lng": 106.845599,
+            "radius_m": 250, "qr_code": "OFFICE-HQJKT00001",
+        })
+
+
+def _rand_below(n: int) -> int:
+    return secrets.randbelow(n)
+
+
+async def _seed_attendance_history():
+    """Populate the last 7 days of demo attendance for charts (uses `secrets`)."""
+    if await db.attendance.count_documents({}) != 0:
+        return
+    users = await db.users.find({"role": {"$in": ["manager", "staff", "direksi"]}}).to_list(100)
+    for i in range(7, 0, -1):
+        day = datetime.now(TZ) - timedelta(days=i)
+        date = day.strftime("%Y-%m-%d")
+        for u in users:
+            if _rand_below(100) < 12:
+                continue  # absent
+            late = _rand_below(100) < 20
+            hour = 9 if late else 8
+            minute = (5 + _rand_below(36)) if late else _rand_below(56)
+            ci = day.replace(hour=hour, minute=minute, second=0, microsecond=0).astimezone(timezone.utc)
+            co = day.replace(hour=17, minute=_rand_below(60), second=0, microsecond=0).astimezone(timezone.utc)
+            await db.attendance.insert_one({
+                "user_id": str(u["_id"]), "date": date,
+                "check_in": ci.isoformat(), "check_out": co.isoformat(),
+                "status": "late" if late else "present",
+                "method": secrets.choice(["face", "qr"]),
+                "office_name": "Kantor Pusat Jakarta", "distance_m": 5 + _rand_below(116),
+                "within_geofence": True, "lat": -6.2087, "lng": 106.8456,
+            })
+
+
+def _write_test_credentials():
     try:
-        Path("/app/memory/test_credentials.md").write_text(creds)
+        Path("/app/memory/test_credentials.md").write_text(TEST_CREDENTIALS_DOC)
     except Exception as e:
         logger.warning(f"could not write creds: {e}")
+
+
+async def seed():
+    await _ensure_indexes()
+    await _seed_users(os.environ["ADMIN_EMAIL"], os.environ["ADMIN_PASSWORD"])
+    await _seed_office()
+    await _seed_attendance_history()
+    logger.info("Seed complete.")
+    _write_test_credentials()
 
 
 @app.on_event("startup")
