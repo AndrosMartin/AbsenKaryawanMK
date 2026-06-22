@@ -82,7 +82,7 @@ export async function render(root, ctx) {
           ${isApprover && r.status === "pending" ? `
             <div class="flex gap-2">
               <button data-reject="${r.id}" data-testid="reject-${r.id}" class="px-3 py-2 rounded-lg text-sm font-medium border border-slate-200 text-slate-700 hover:bg-slate-50">Tolak</button>
-              <button data-approve="${r.id}" data-testid="approve-${r.id}" class="px-3 py-2 rounded-lg text-sm font-medium bg-slate-900 text-white hover:bg-slate-800">Setujui</button>
+              <button data-approve="${r.id}" data-testid="approve-${r.id}" class="px-3 py-2 rounded-lg text-sm font-medium bg-gold text-ink hover:bg-gold-500">Setujui</button>
             </div>` : ""}
         </div>
       </div>`;
@@ -98,6 +98,7 @@ export async function render(root, ctx) {
     try {
       await ctx.api.post(`/employee-requests/${id}/approve`, {});
       ui.toast("Permintaan disetujui & diterapkan", "success");
+      if (window.__refreshNotifs) window.__refreshNotifs();
       load();
     } catch (e) { ui.toast(e.message, "error"); }
   }
@@ -107,6 +108,7 @@ export async function render(root, ctx) {
     try {
       await ctx.api.post(`/employee-requests/${id}/reject`, { reason });
       ui.toast("Permintaan ditolak", "info");
+      if (window.__refreshNotifs) window.__refreshNotifs();
       load();
     } catch (e) { ui.toast(e.message, "error"); }
   }

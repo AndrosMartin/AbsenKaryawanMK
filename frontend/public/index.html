@@ -18,6 +18,14 @@
             sans: ["'IBM Plex Sans'", "sans-serif"],
             mono: ["'JetBrains Mono'", "monospace"],
           },
+          colors: {
+            gold: {
+              DEFAULT: "#E0B100", 50: "#FBF6E3", 100: "#F7ECC2", 200: "#F0D98A",
+              300: "#E9C654", 400: "#E0B100", 500: "#C99A00", 600: "#A87E00",
+              700: "#856300", 800: "#6B5000", 900: "#574200",
+            },
+            ink: { DEFAULT: "#0B0B0C", 700: "#222225", 800: "#161618", 900: "#0B0B0C" },
+          },
         },
       },
     };
@@ -40,10 +48,10 @@
   <style>
     html, body { font-family: 'IBM Plex Sans', sans-serif; background: #f8fafc; }
     h1,h2,h3,h4,.font-heading { font-family: 'Cabinet Grotesk', sans-serif; }
-    ::selection { background: #0f172a; color: #fff; }
+    ::selection { background: #E0B100; color: #0B0B0C; }
     /* scrollbar */
     ::-webkit-scrollbar { width: 9px; height: 9px; }
-    ::-webkit-scrollbar-thumb { background: #cbd5e1; border-radius: 9px; }
+    ::-webkit-scrollbar-thumb { background: #d6c270; border-radius: 9px; }
     ::-webkit-scrollbar-track { background: transparent; }
     .fade-in { animation: fadeIn .4s ease both; }
     @keyframes fadeIn { from { opacity: 0; transform: translateY(8px);} to { opacity: 1; transform: none;} }
@@ -54,19 +62,22 @@
     .stagger > *:nth-child(4){animation-delay:.18s}
     .stagger > *:nth-child(5){animation-delay:.23s}
     .stagger > *:nth-child(6){animation-delay:.28s}
-    .nav-active { background: rgba(255,255,255,.08); color:#fff; }
-    .nav-active .ph, .nav-active i { color:#fff; }
+    /* gold active navigation on black sidebar */
+    .nav-active { background: linear-gradient(90deg, rgba(224,177,0,.16), rgba(224,177,0,.04)); color:#F0D98A; box-shadow: inset 3px 0 0 #E0B100; }
+    .nav-active .ph, .nav-active i { color:#E0B100; }
     .spin { animation: spin 1s linear infinite; } @keyframes spin { to { transform: rotate(360deg);} }
     #global-loader { transition: opacity .3s; }
+    /* brand gradients */
+    .bg-hero-dark { background: radial-gradient(120% 120% at 80% 0%, rgba(224,177,0,.18) 0%, rgba(224,177,0,0) 45%), linear-gradient(160deg,#0B0B0C 0%, #161618 60%, #0B0B0C 100%); }
+    .text-gold-grad { background: linear-gradient(90deg,#E0B100,#F0D98A); -webkit-background-clip:text; background-clip:text; color:transparent; }
+    .notif-badge { animation: pop .25s ease; } @keyframes pop { from{ transform: scale(.4); opacity:0 } to{ transform: scale(1); opacity:1 } }
   </style>
 </head>
 <body class="antialiased text-slate-800">
-  <div id="global-loader" class="fixed inset-0 z-[100] flex items-center justify-center bg-slate-50">
+  <div id="global-loader" class="fixed inset-0 z-[100] flex items-center justify-center bg-ink">
     <div class="flex flex-col items-center gap-3">
-      <div class="h-10 w-10 rounded-lg bg-slate-900 flex items-center justify-center">
-        <i class="ph-fill ph-fingerprint text-white text-2xl"></i>
-      </div>
-      <span class="text-xs uppercase tracking-widest text-slate-400 font-medium">Memuat AbsensiPro…</span>
+      <img src="/logo-mitra.jpg" alt="MitraKeuangan" class="h-16 w-16 rounded-xl object-cover ring-1 ring-gold/40" />
+      <span class="text-xs uppercase tracking-widest text-gold/70 font-medium">Memuat AbsensiPro…</span>
     </div>
   </div>
 

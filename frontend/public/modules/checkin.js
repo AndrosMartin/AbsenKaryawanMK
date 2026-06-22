@@ -69,12 +69,12 @@ export async function render(root, ctx) {
             <div><p class="text-xs text-slate-400 uppercase tracking-widest">Keluar</p><p class="font-mono font-semibold text-slate-900">${out ? ui.fmtTime(out) : "—"}</p></div>
             <div class="flex items-center">${ui.statusPill(today.status)}</div>
           </div>
-          ${!out ? `<button id="checkout-btn" data-testid="checkout-btn" class="bg-slate-900 text-white px-4 py-2.5 rounded-lg text-sm font-medium hover:bg-slate-800">Check-out Sekarang</button>` : ""}
+          ${!out ? `<button id="checkout-btn" data-testid="checkout-btn" class="bg-gold text-ink px-4 py-2.5 rounded-lg text-sm font-semibold hover:bg-gold-500">Check-out Sekarang</button>` : ""}
         </div>`;
       if (!out) root.querySelector("#checkout-btn").onclick = doCheckout;
     } else {
       todayCard.innerHTML = `
-        <div class="bg-slate-900 rounded-xl p-5 flex items-center gap-4 text-white">
+        <div class="bg-ink rounded-xl p-5 flex items-center gap-4 text-white">
           <i class="ph-fill ph-clock text-2xl"></i>
           <div><p class="font-heading font-semibold">Belum check-in hari ini</p><p class="text-sm text-slate-400">Selesaikan verifikasi di bawah untuk mencatat kehadiran.</p></div>
         </div>`;
@@ -99,7 +99,7 @@ export async function render(root, ctx) {
   async function renderFaceTab() {
     if (!u.face_enrolled) {
       verifyBody.innerHTML = `
-        <div class="aspect-video rounded-xl bg-slate-900 flex flex-col items-center justify-center text-center p-6">
+        <div class="aspect-video rounded-xl bg-ink flex flex-col items-center justify-center text-center p-6">
           <i class="ph ph-user-focus text-4xl text-slate-500"></i>
           <p class="text-white font-medium mt-3">Wajah belum didaftarkan</p>
           <p class="text-slate-400 text-sm mt-1">Daftarkan wajah Anda dulu di menu "Wajah Saya".</p>
@@ -109,19 +109,19 @@ export async function render(root, ctx) {
       return;
     }
     verifyBody.innerHTML = `
-      <div class="relative aspect-video rounded-xl bg-slate-900 overflow-hidden border border-slate-800 flex items-center justify-center">
+      <div class="relative aspect-video rounded-xl bg-ink overflow-hidden border border-slate-800 flex items-center justify-center">
         <video id="cam" autoplay muted playsinline class="w-full h-full object-cover"></video>
         <div class="absolute inset-0 pointer-events-none flex items-center justify-center">
           <div class="w-40 h-52 border-2 border-white/40 rounded-[40%]"></div>
         </div>
-        <div id="cam-overlay" class="absolute inset-0 bg-slate-900/80 flex flex-col items-center justify-center text-center text-white p-4">
+        <div id="cam-overlay" class="absolute inset-0 bg-ink/80 flex flex-col items-center justify-center text-center text-white p-4">
           <i class="ph ph-camera text-3xl text-slate-400"></i>
           <p class="text-sm mt-2 text-slate-300">Aktifkan kamera untuk memulai</p>
           <button id="start-cam" data-testid="start-camera" class="mt-3 bg-white text-slate-900 px-4 py-2 rounded-lg text-sm font-medium">Aktifkan Kamera</button>
         </div>
       </div>
       <button id="face-checkin" data-testid="face-checkin-btn" disabled
-        class="mt-4 w-full bg-slate-900 disabled:bg-slate-300 text-white py-3 rounded-lg text-sm font-medium hover:bg-slate-800 flex items-center justify-center gap-2">
+        class="mt-4 w-full bg-gold disabled:bg-slate-200 disabled:text-slate-400 text-ink py-3 rounded-lg text-sm font-semibold hover:bg-gold-500 flex items-center justify-center gap-2">
         <i class="ph ph-fingerprint"></i> Verifikasi Wajah & Check-in
       </button>
       <p id="face-msg" class="text-xs text-slate-400 mt-2 text-center">Posisikan wajah di dalam bingkai.</p>`;
@@ -174,8 +174,8 @@ export async function render(root, ctx) {
   // ---- QR TAB ----
   async function renderQrTab() {
     verifyBody.innerHTML = `
-      <div id="qr-reader" data-testid="qr-reader" class="rounded-xl overflow-hidden border border-slate-200 bg-slate-900 min-h-[260px]"></div>
-      <button id="start-qr" data-testid="start-qr" class="mt-4 w-full bg-slate-900 text-white py-3 rounded-lg text-sm font-medium hover:bg-slate-800 flex items-center justify-center gap-2">
+      <div id="qr-reader" data-testid="qr-reader" class="rounded-xl overflow-hidden border border-slate-200 bg-ink min-h-[260px]"></div>
+      <button id="start-qr" data-testid="start-qr" class="mt-4 w-full bg-gold text-ink py-3 rounded-lg text-sm font-semibold hover:bg-gold-500 flex items-center justify-center gap-2">
         <i class="ph ph-qr-code"></i> Mulai Scan QR Kantor
       </button>
       <p id="qr-msg" class="text-xs text-slate-400 mt-2 text-center">Arahkan kamera ke QR code yang terpasang di kantor.</p>`;

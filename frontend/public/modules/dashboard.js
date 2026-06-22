@@ -30,7 +30,7 @@ export async function render(root, ctx) {
     return `<div class="flex-1 flex flex-col items-center gap-2">
       <div class="w-full flex flex-col justify-end items-center gap-0.5 h-40">
         <div class="w-7 rounded-t bg-amber-400" style="height:${lh}%" title="Terlambat: ${t.late}"></div>
-        <div class="w-7 rounded-t bg-slate-900" style="height:${ph}%" title="Hadir: ${t.present}"></div>
+        <div class="w-7 rounded-t bg-ink" style="height:${ph}%" title="Hadir: ${t.present}"></div>
       </div>
       <span class="text-[11px] text-slate-400 font-medium">${t.label}</span>
     </div>`;
@@ -44,7 +44,7 @@ export async function render(root, ctx) {
         <span class="text-slate-500 font-mono">${d.hadir}/${d.total} · ${pct}%</span>
       </div>
       <div class="h-2.5 bg-slate-100 rounded-full overflow-hidden">
-        <div class="h-full bg-slate-900 rounded-full transition-all" style="width:${pct}%"></div>
+        <div class="h-full bg-ink rounded-full transition-all" style="width:${pct}%"></div>
       </div>
     </div>`;
   }).join("");
@@ -93,7 +93,7 @@ export async function render(root, ctx) {
             <p class="text-xs text-slate-400">Jumlah check-in per hari</p>
           </div>
           <div class="flex items-center gap-4 text-xs">
-            <span class="flex items-center gap-1.5"><span class="h-2.5 w-2.5 rounded-sm bg-slate-900"></span>Tepat waktu</span>
+            <span class="flex items-center gap-1.5"><span class="h-2.5 w-2.5 rounded-sm bg-ink"></span>Tepat waktu</span>
             <span class="flex items-center gap-1.5"><span class="h-2.5 w-2.5 rounded-sm bg-amber-400"></span>Terlambat</span>
           </div>
         </div>

@@ -14,7 +14,7 @@ export async function render(root, ctx) {
         <p class="text-xs font-medium text-slate-500 uppercase tracking-widest">Manajemen</p>
         <h2 class="font-heading font-bold text-2xl text-slate-900">Data Karyawan</h2>
       </div>
-      ${canManage ? `<button id="add-btn" data-testid="add-employee-btn" class="bg-slate-900 text-white px-4 py-2.5 rounded-lg text-sm font-medium hover:bg-slate-800 flex items-center gap-2"><i class="ph ph-plus"></i> Tambah Karyawan</button>` : ""}
+      ${canManage ? `<button id="add-btn" data-testid="add-employee-btn" class="bg-gold text-ink px-4 py-2.5 rounded-lg text-sm font-semibold hover:bg-gold-500 flex items-center gap-2"><i class="ph ph-plus"></i> Tambah Karyawan</button>` : ""}
     </div>
     ${isHrd ? `<div data-testid="hrd-notice" class="flex items-start gap-3 bg-violet-50 border border-violet-200 rounded-xl px-4 py-3">
       <i class="ph-fill ph-info text-violet-600 text-lg mt-0.5"></i>
@@ -93,7 +93,7 @@ export async function render(root, ctx) {
             </div>
             <div><label class="block text-sm font-medium text-slate-700 mb-1">${isEdit ? "Reset Password (opsional)" : "Password"}</label><input id="f-pass" data-testid="emp-password" type="text" ${isEdit ? "" : "required"} placeholder="${isEdit ? "Kosongkan jika tidak diubah" : "password123"}" value="${isEdit ? "" : "password123"}" class="w-full px-3 py-2 border border-slate-200 rounded-lg text-sm focus:ring-2 focus:ring-slate-900 focus:outline-none" /></div>
             <p id="modal-err" class="text-sm text-rose-600 hidden"></p>
-            <button type="submit" data-testid="save-employee-btn" class="w-full bg-slate-900 text-white py-2.5 rounded-lg text-sm font-medium hover:bg-slate-800 flex items-center justify-center gap-2"><span id="save-text">${isEdit ? "Simpan Perubahan" : "Tambah Karyawan"}</span></button>
+            <button type="submit" data-testid="save-employee-btn" class="w-full bg-gold text-ink py-2.5 rounded-lg text-sm font-semibold hover:bg-gold-500 flex items-center justify-center gap-2"><span id="save-text">${isEdit ? "Simpan Perubahan" : "Tambah Karyawan"}</span></button>
           </form>
         </div>
       </div>`;

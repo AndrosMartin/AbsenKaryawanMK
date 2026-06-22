@@ -11,7 +11,7 @@ export async function render(root, ctx) {
         <h2 class="font-heading font-bold text-2xl text-slate-900">Lokasi Kantor & Geofence</h2>
         <p class="text-sm text-slate-500 mt-1">Tetapkan titik kantor dan radius. Karyawan hanya bisa absen di dalam radius.</p>
       </div>
-      <button id="add-office" data-testid="add-office-btn" class="bg-slate-900 text-white px-4 py-2.5 rounded-lg text-sm font-medium hover:bg-slate-800 flex items-center gap-2"><i class="ph ph-plus"></i> Tambah Lokasi</button>
+      <button id="add-office" data-testid="add-office-btn" class="bg-gold text-ink px-4 py-2.5 rounded-lg text-sm font-semibold hover:bg-gold-500 flex items-center gap-2"><i class="ph ph-plus"></i> Tambah Lokasi</button>
     </div>
     <div id="office-list" class="grid md:grid-cols-2 gap-5"></div>
   </div>
@@ -35,7 +35,7 @@ export async function render(root, ctx) {
       <div class="bg-white border border-slate-200 rounded-xl p-5">
         <div class="flex items-start justify-between">
           <div class="flex items-center gap-3">
-            <div class="h-11 w-11 rounded-xl bg-slate-900 text-white flex items-center justify-center"><i class="ph-fill ph-buildings text-xl"></i></div>
+            <div class="h-11 w-11 rounded-xl bg-ink text-white flex items-center justify-center"><i class="ph-fill ph-buildings text-xl"></i></div>
             <div>
               <h3 class="font-heading font-semibold text-slate-900">${o.name}</h3>
               <p class="text-xs text-slate-400 font-mono">${o.lat.toFixed(5)}, ${o.lng.toFixed(5)}</p>
@@ -86,7 +86,7 @@ export async function render(root, ctx) {
             <div><label class="block text-sm font-medium text-slate-700 mb-1">Radius (meter)</label><input id="o-radius" data-testid="office-radius" type="number" required value="${office?.radius_m ?? 200}" class="w-full px-3 py-2 border border-slate-200 rounded-lg text-sm font-mono focus:ring-2 focus:ring-slate-900 focus:outline-none" /></div>
             <button type="button" id="use-my-loc" class="text-xs font-medium text-slate-900 hover:underline flex items-center gap-1"><i class="ph ph-crosshair"></i> Gunakan lokasi saya saat ini</button>
             <p id="modal-err" class="text-sm text-rose-600 hidden"></p>
-            <button type="submit" data-testid="save-office-btn" class="w-full bg-slate-900 text-white py-2.5 rounded-lg text-sm font-medium hover:bg-slate-800 flex items-center justify-center gap-2"><span id="save-text">${isEdit ? "Simpan" : "Tambah Lokasi"}</span></button>
+            <button type="submit" data-testid="save-office-btn" class="w-full bg-gold text-ink py-2.5 rounded-lg text-sm font-semibold hover:bg-gold-500 flex items-center justify-center gap-2"><span id="save-text">${isEdit ? "Simpan" : "Tambah Lokasi"}</span></button>
           </form>
         </div>
       </div>`;

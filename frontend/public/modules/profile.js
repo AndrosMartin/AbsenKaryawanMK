@@ -15,7 +15,7 @@ export async function render(root, ctx) {
       <h2 class="font-heading font-bold text-2xl text-slate-900">Profil Saya</h2>
     </div>
     <div class="bg-white border border-slate-200 rounded-xl overflow-hidden">
-      <div class="bg-slate-900 p-6 flex items-center gap-4">
+      <div class="bg-ink p-6 flex items-center gap-4">
         <div class="h-16 w-16 rounded-2xl bg-white/10 text-white flex items-center justify-center text-xl font-heading font-bold">${ui.initials(u.name)}</div>
         <div>
           <h3 class="font-heading font-bold text-xl text-white">${u.name}</h3>

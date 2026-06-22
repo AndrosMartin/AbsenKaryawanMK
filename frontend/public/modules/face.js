@@ -21,10 +21,10 @@ export async function render(root, ctx) {
       </div>
 
       <div class="grid md:grid-cols-2 gap-6">
-        <div class="relative aspect-square rounded-xl bg-slate-900 overflow-hidden border border-slate-800 flex items-center justify-center">
+        <div class="relative aspect-square rounded-xl bg-ink overflow-hidden border border-slate-800 flex items-center justify-center">
           <video id="cam" autoplay muted playsinline class="w-full h-full object-cover"></video>
           <div class="absolute inset-0 pointer-events-none flex items-center justify-center"><div class="w-44 h-56 border-2 border-white/40 rounded-[40%]"></div></div>
-          <div id="overlay" class="absolute inset-0 bg-slate-900/85 flex flex-col items-center justify-center text-center p-4">
+          <div id="overlay" class="absolute inset-0 bg-ink/85 flex flex-col items-center justify-center text-center p-4">
             <i class="ph ph-user-focus text-4xl text-slate-500"></i>
             <p class="text-slate-300 text-sm mt-2">Aktifkan kamera untuk mendaftar</p>
             <button id="start-cam" data-testid="start-camera" class="mt-3 bg-white text-slate-900 px-4 py-2 rounded-lg text-sm font-medium">Aktifkan Kamera</button>
@@ -38,7 +38,7 @@ export async function render(root, ctx) {
             <li class="flex gap-3"><span class="h-6 w-6 rounded-full bg-slate-100 text-slate-700 flex items-center justify-center text-xs font-semibold shrink-0">3</span> Tekan "Daftarkan Wajah" dan tahan posisi.</li>
           </ol>
           <button id="enroll-btn" data-testid="enroll-face-btn" disabled
-            class="w-full bg-slate-900 disabled:bg-slate-300 text-white py-3 rounded-lg text-sm font-medium hover:bg-slate-800 flex items-center justify-center gap-2">
+            class="w-full bg-gold disabled:bg-slate-200 disabled:text-slate-400 text-ink py-3 rounded-lg text-sm font-semibold hover:bg-gold-500 flex items-center justify-center gap-2">
             <i class="ph ph-user-plus"></i> ${enrolled ? "Perbarui Wajah" : "Daftarkan Wajah"}
           </button>
           <p id="face-msg" class="text-xs text-slate-400 mt-3 text-center">Aktifkan kamera terlebih dahulu.</p>

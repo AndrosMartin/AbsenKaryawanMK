@@ -682,6 +682,39 @@ async def reject_request(req_id: str, body: RejectBody, user: dict = Depends(req
 
 
 # ----------------------------------------------------------------------------
+# Notifications (role-aware)
+# ----------------------------------------------------------------------------
+_ACTION_LABEL = {"create": "Tambah karyawan", "update": "Ubah data karyawan", "delete": "Hapus karyawan"}
+
+
+@api_router.get("/notifications")
+async def notifications(user: dict = Depends(get_current_user)):
+    role = user.get("role")
+    items = []
+    if role in APPROVER_ROLES:
+        reqs = await db.employee_requests.find({"status": "pending"}).sort("created_at", -1).to_list(50)
+        for r in reqs:
+            items.append({
+                "id": str(r["_id"]), "type": "pending",
+                "title": f"Permintaan: {_ACTION_LABEL.get(r['action'], r['action'])}",
+                "body": r.get("summary"), "by": r.get("requested_by_name"),
+                "created_at": r.get("created_at"),
+            })
+    elif role == "hrd":
+        reqs = await db.employee_requests.find(
+            {"requested_by": str(user["_id"]), "status": {"$in": ["approved", "rejected"]}}
+        ).sort("reviewed_at", -1).to_list(50)
+        for r in reqs:
+            items.append({
+                "id": str(r["_id"]), "type": r["status"],
+                "title": "Permintaan disetujui" if r["status"] == "approved" else "Permintaan ditolak",
+                "body": r.get("summary"), "by": r.get("reviewed_by_name"),
+                "created_at": r.get("reviewed_at"),
+            })
+    return {"items": items, "count": len(items)}
+
+
+# ----------------------------------------------------------------------------
 # App wiring + seed
 # ----------------------------------------------------------------------------
 app.include_router(api_router)

@@ -50,7 +50,7 @@ async function navigate(route) {
   const content = document.getElementById("app-content");
   content.innerHTML = `<div class="flex items-center justify-center py-32 text-slate-400"><i class="ph ph-circle-notch spin text-3xl"></i></div>`;
   try {
-    const mod = await import(`/modules/${route}.js?v=5`);
+    const mod = await import(`/modules/${route}.js?v=6`);
     content.innerHTML = "";
     await mod.render(content, ctx);
   } catch (e) {
@@ -82,20 +82,18 @@ function renderShell() {
   document.getElementById("app").innerHTML = `
   <div class="min-h-screen flex bg-slate-50">
     <!-- Sidebar -->
-    <aside id="sidebar" class="fixed lg:static inset-y-0 left-0 z-50 w-72 bg-slate-900 flex flex-col transform -translate-x-full lg:translate-x-0 transition-transform duration-300">
-      <div class="h-16 flex items-center gap-3 px-6 border-b border-white/10">
-        <div class="h-9 w-9 rounded-lg bg-white flex items-center justify-center">
-          <i class="ph-fill ph-fingerprint text-slate-900 text-xl"></i>
-        </div>
+    <aside id="sidebar" class="fixed lg:static inset-y-0 left-0 z-50 w-72 bg-ink flex flex-col transform -translate-x-full lg:translate-x-0 transition-transform duration-300">
+      <div class="h-16 flex items-center gap-3 px-5 border-b border-white/10">
+        <img src="/logo-mitra.jpg" alt="MitraKeuangan" class="h-10 w-10 rounded-lg object-cover ring-1 ring-gold/40" />
         <div>
-          <p class="text-white font-heading font-bold text-lg leading-none">AbsensiPro</p>
-          <p class="text-[10px] uppercase tracking-widest text-slate-500 mt-1">Workforce Monitor</p>
+          <p class="font-heading font-bold text-lg leading-none"><span class="text-white">Mitra</span><span class="text-gold">Keuangan</span></p>
+          <p class="text-[10px] uppercase tracking-[0.2em] text-slate-500 mt-1">Absensi & Monitoring</p>
         </div>
       </div>
       <nav class="flex-1 px-3 py-5 space-y-1 overflow-y-auto">${navHtml}</nav>
       <div class="p-3 border-t border-white/10">
         <div class="flex items-center gap-3 px-3 py-2">
-          <div class="h-9 w-9 rounded-full bg-slate-700 text-white flex items-center justify-center text-xs font-semibold">${ui.initials(u.name)}</div>
+          <div class="h-9 w-9 rounded-full bg-gold/20 text-gold ring-1 ring-gold/40 flex items-center justify-center text-xs font-semibold">${ui.initials(u.name)}</div>
           <div class="flex-1 min-w-0">
             <p class="text-sm font-medium text-white truncate">${u.name}</p>
             <p class="text-[11px] text-slate-500 truncate">${ui.ROLE_LABELS[u.role]}</p>
@@ -116,6 +114,19 @@ function renderShell() {
             <span class="text-xs text-slate-400" id="topbar-date"></span>
             <span class="text-sm font-mono font-medium text-slate-700" id="topbar-clock"></span>
           </div>
+          <div class="relative" id="notif-wrap">
+            <button id="notif-btn" data-testid="notif-btn" class="relative h-10 w-10 rounded-lg border border-slate-200 hover:bg-slate-50 flex items-center justify-center text-slate-700 transition-colors">
+              <i class="ph ph-bell text-xl"></i>
+              <span id="notif-badge" data-testid="notif-badge" class="hidden absolute -top-1.5 -right-1.5 min-w-[18px] h-[18px] px-1 rounded-full bg-gold text-ink text-[10px] font-bold flex items-center justify-center notif-badge"></span>
+            </button>
+            <div id="notif-panel" class="hidden absolute right-0 mt-2 w-80 bg-white border border-slate-200 rounded-xl shadow-xl z-50 overflow-hidden">
+              <div class="px-4 py-3 border-b border-slate-100 flex items-center justify-between">
+                <span class="font-heading font-semibold text-slate-900">Notifikasi</span>
+                <span id="notif-count-label" class="text-xs text-slate-400"></span>
+              </div>
+              <div id="notif-list" class="max-h-80 overflow-y-auto"></div>
+            </div>
+          </div>
           ${ui.roleBadge(u.role)}
         </div>
       </header>
@@ -133,6 +144,85 @@ function renderShell() {
   overlay.onclick = () => { sidebar.classList.add("-translate-x-full"); overlay.classList.add("hidden"); };
 
   startClock();
+  setupNotifications();
+}
+
+const SEEN_KEY = "absensipro_seen_notifs";
+let _notifTimer = null;
+
+function getSeen() {
+  try { return new Set(JSON.parse(localStorage.getItem(SEEN_KEY) || "[]")); }
+  catch (e) { return new Set(); }
+}
+function markSeen(ids) {
+  const s = getSeen();
+  ids.forEach((id) => s.add(id));
+  localStorage.setItem(SEEN_KEY, JSON.stringify([...s].slice(-200)));
+}
+
+function notifIcon(type) {
+  if (type === "approved") return ["ph-check-circle", "text-emerald-600", "bg-emerald-50"];
+  if (type === "rejected") return ["ph-x-circle", "text-rose-600", "bg-rose-50"];
+  return ["ph-bell-ringing", "text-gold-600", "bg-gold-50"];
+}
+
+async function refreshNotifications() {
+  const badge = document.getElementById("notif-badge");
+  if (!badge) return;
+  let data;
+  try { data = await api.get("/notifications"); } catch (e) { return; }
+  const seen = getSeen();
+  const unread = data.items.filter((i) => !seen.has(i.id)).length;
+  if (unread > 0) {
+    badge.textContent = unread > 9 ? "9+" : String(unread);
+    badge.classList.remove("hidden");
+  } else {
+    badge.classList.add("hidden");
+  }
+  const list = document.getElementById("notif-list");
+  const label = document.getElementById("notif-count-label");
+  if (label) label.textContent = data.items.length ? `${data.items.length} item` : "";
+  if (list) {
+    list.innerHTML = data.items.length ? data.items.map((i) => {
+      const [icon, color, bg] = notifIcon(i.type);
+      const isUnread = !seen.has(i.id);
+      return `<button data-notif-item="${i.id}" class="w-full text-left px-4 py-3 border-b border-slate-100 last:border-0 hover:bg-slate-50 flex gap-3 ${isUnread ? "bg-gold-50/40" : ""}">
+        <div class="h-8 w-8 rounded-lg ${bg} ${color} flex items-center justify-center shrink-0"><i class="ph-fill ${icon}"></i></div>
+        <div class="min-w-0">
+          <p class="text-sm font-medium text-slate-900">${i.title}</p>
+          <p class="text-xs text-slate-500 truncate">${i.body || ""}</p>
+          <p class="text-[11px] text-slate-400 mt-0.5">${i.by || ""} · ${ui.fmtDate(i.created_at)}</p>
+        </div>
+      </button>`;
+    }).join("") : `<p class="px-4 py-10 text-center text-sm text-slate-400">Tidak ada notifikasi</p>`;
+    list.querySelectorAll("[data-notif-item]").forEach((b) => b.onclick = () => {
+      document.getElementById("notif-panel").classList.add("hidden");
+      navigate("approvals");
+    });
+  }
+  return data;
+}
+
+function setupNotifications() {
+  const btn = document.getElementById("notif-btn");
+  const panel = document.getElementById("notif-panel");
+  if (!btn) return;
+  btn.onclick = async (e) => {
+    e.stopPropagation();
+    const willOpen = panel.classList.contains("hidden");
+    panel.classList.toggle("hidden");
+    if (willOpen) {
+      const data = await refreshNotifications();
+      if (data) { markSeen(data.items.map((i) => i.id)); refreshNotifications(); }
+    }
+  };
+  document.addEventListener("click", (e) => {
+    if (!document.getElementById("notif-wrap")?.contains(e.target)) panel.classList.add("hidden");
+  });
+  refreshNotifications();
+  window.__refreshNotifs = refreshNotifications;
+  if (_notifTimer) clearInterval(_notifTimer);
+  _notifTimer = setInterval(refreshNotifications, 25000);
 }
 
 function startClock() {
@@ -150,7 +240,7 @@ function startClock() {
 
 async function renderLogin() {
   document.getElementById("app").innerHTML = "";
-  const mod = await import("/modules/login.js?v=5");
+  const mod = await import("/modules/login.js?v=6");
   await mod.render(document.getElementById("app"), {
     api, ui,
     onLogin: async (token, user) => {
