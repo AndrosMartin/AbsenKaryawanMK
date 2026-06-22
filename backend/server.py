@@ -33,8 +33,12 @@ TZ = ZoneInfo("Asia/Jakarta")
 WORK_START = os.environ.get("WORK_START", "09:00")
 FACE_MATCH_THRESHOLD = 0.55
 
-MONITOR_ROLES = {"owner", "direksi", "manager"}
-MANAGE_ROLES = {"owner", "direksi"}
+MONITOR_ROLES = {"owner", "direksi", "manager", "hrd"}
+MANAGE_ROLES = {"owner", "direksi"}        # dapat menerapkan perubahan langsung
+HR_ROLES = {"owner", "direksi", "hrd"}     # dapat mengajukan CRUD karyawan
+APPROVER_ROLES = {"owner", "direksi"}      # dapat menyetujui/menolak permintaan HRD
+VALID_ROLES = {"owner", "direksi", "manager", "hrd", "staff"}
+HRD_ASSIGNABLE_ROLES = {"manager", "hrd", "staff"}  # role yang boleh diatur HRD
 
 app = FastAPI(title="AbsensiPro API")
 api_router = APIRouter(prefix="/api")
@@ -204,6 +208,10 @@ class CheckOutBody(BaseModel):
     lng: Optional[float] = None
 
 
+class RejectBody(BaseModel):
+    reason: Optional[str] = None
+
+
 # ----------------------------------------------------------------------------
 # Auth routes
 # ----------------------------------------------------------------------------
@@ -216,7 +224,7 @@ async def register(body: RegisterBody):
     doc = {
         "name": body.name, "email": email,
         "password_hash": hash_password(body.password),
-        "role": body.role if body.role in {"owner", "direksi", "manager", "staff"} else "staff",
+        "role": body.role if body.role in VALID_ROLES else "staff",
         "department": body.department, "position": body.position,
         "phone": body.phone,
         "employee_id": f"EMP-{count + 1:04d}",
@@ -489,25 +497,36 @@ async def dashboard_stats(user: dict = Depends(require_roles(MONITOR_ROLES))):
 
 
 # ----------------------------------------------------------------------------
-# Employees (management)
+# Employees (management) — with HRD approval workflow
 # ----------------------------------------------------------------------------
-@api_router.get("/employees")
-async def list_employees(user: dict = Depends(require_roles(MONITOR_ROLES))):
-    users = await db.users.find().sort("created_at", 1).to_list(1000)
-    return [public_user(u) for u in users]
+def req_public(r: dict) -> dict:
+    payload = r.get("payload")
+    if isinstance(payload, dict):
+        payload = {k: v for k, v in payload.items() if k != "password_hash"}
+    return {
+        "id": str(r["_id"]),
+        "action": r["action"],
+        "summary": r.get("summary"),
+        "status": r["status"],
+        "target_emp_id": r.get("target_emp_id"),
+        "payload": payload,
+        "requested_by_name": r.get("requested_by_name"),
+        "created_at": r.get("created_at"),
+        "reviewed_by_name": r.get("reviewed_by_name"),
+        "reviewed_at": r.get("reviewed_at"),
+        "reject_reason": r.get("reject_reason"),
+    }
 
 
-@api_router.post("/employees")
-async def create_employee(body: EmployeeBody, user: dict = Depends(require_roles(MANAGE_ROLES))):
-    email = body.email.lower()
-    if await db.users.find_one({"email": email}):
+async def _apply_create_employee(payload: dict) -> dict:
+    if await db.users.find_one({"email": payload["email"]}):
         raise HTTPException(status_code=400, detail="Email sudah terdaftar")
     count = await db.users.count_documents({})
     doc = {
-        "name": body.name, "email": email,
-        "password_hash": hash_password(body.password),
-        "role": body.role if body.role in {"owner", "direksi", "manager", "staff"} else "staff",
-        "department": body.department, "position": body.position, "phone": body.phone,
+        "name": payload["name"], "email": payload["email"],
+        "password_hash": payload["password_hash"],
+        "role": payload["role"], "department": payload.get("department"),
+        "position": payload.get("position"), "phone": payload.get("phone"),
         "employee_id": f"EMP-{count + 1:04d}", "face_descriptor": None,
         "created_at": now_iso(),
     }
@@ -516,23 +535,149 @@ async def create_employee(body: EmployeeBody, user: dict = Depends(require_roles
     return public_user(doc)
 
 
-@api_router.put("/employees/{emp_id}")
-async def update_employee(emp_id: str, body: EmployeeUpdate, user: dict = Depends(require_roles(MANAGE_ROLES))):
-    update = {k: v for k, v in body.model_dump().items() if v is not None}
-    if "password" in update:
-        update["password_hash"] = hash_password(update.pop("password"))
+async def _apply_update_employee(emp_id: str, update: dict) -> dict:
     if update:
         await db.users.update_one({"_id": ObjectId(emp_id)}, {"$set": update})
     u = await db.users.find_one({"_id": ObjectId(emp_id)})
     return public_user(u)
 
 
-@api_router.delete("/employees/{emp_id}")
-async def delete_employee(emp_id: str, user: dict = Depends(require_roles(MANAGE_ROLES))):
-    if str(user["_id"]) == emp_id:
-        raise HTTPException(status_code=400, detail="Tidak dapat menghapus akun sendiri")
+async def _apply_delete_employee(emp_id: str) -> None:
     await db.users.delete_one({"_id": ObjectId(emp_id)})
     await db.attendance.delete_many({"user_id": emp_id})
+
+
+async def _create_request(action: str, requester: dict, summary: str,
+                          payload: Optional[dict] = None, target_emp_id: Optional[str] = None) -> dict:
+    doc = {
+        "action": action, "payload": payload, "target_emp_id": target_emp_id,
+        "summary": summary, "status": "pending",
+        "requested_by": str(requester["_id"]), "requested_by_name": requester.get("name"),
+        "created_at": now_iso(),
+        "reviewed_by": None, "reviewed_by_name": None, "reviewed_at": None, "reject_reason": None,
+    }
+    res = await db.employee_requests.insert_one(doc)
+    doc["_id"] = res.inserted_id
+    out = req_public(doc)
+    out["pending"] = True
+    return out
+
+
+def _guard_hrd_role(requester: dict, role: Optional[str]):
+    """HRD tidak boleh menetapkan/ mengubah seseorang menjadi owner/direksi."""
+    if requester["role"] == "hrd" and role is not None and role not in HRD_ASSIGNABLE_ROLES:
+        raise HTTPException(status_code=403, detail="HRD tidak dapat menetapkan role Owner/Direksi")
+
+
+@api_router.get("/employees")
+async def list_employees(user: dict = Depends(require_roles(MONITOR_ROLES))):
+    users = await db.users.find().sort("created_at", 1).to_list(1000)
+    return [public_user(u) for u in users]
+
+
+@api_router.post("/employees")
+async def create_employee(body: EmployeeBody, user: dict = Depends(require_roles(HR_ROLES))):
+    email = body.email.lower()
+    role = body.role if body.role in VALID_ROLES else "staff"
+    _guard_hrd_role(user, role)
+    if await db.users.find_one({"email": email}):
+        raise HTTPException(status_code=400, detail="Email sudah terdaftar")
+    payload = {
+        "name": body.name, "email": email, "password_hash": hash_password(body.password),
+        "role": role, "department": body.department, "position": body.position, "phone": body.phone,
+    }
+    if user["role"] in APPROVER_ROLES:
+        return await _apply_create_employee(payload)
+    return await _create_request("create", user, payload=payload,
+                                 summary=f"Tambah karyawan: {body.name} ({email}) — role {role}")
+
+
+@api_router.put("/employees/{emp_id}")
+async def update_employee(emp_id: str, body: EmployeeUpdate, user: dict = Depends(require_roles(HR_ROLES))):
+    _guard_hrd_role(user, body.role)
+    target = await db.users.find_one({"_id": ObjectId(emp_id)})
+    if not target:
+        raise HTTPException(status_code=404, detail="Karyawan tidak ditemukan")
+    if user["role"] == "hrd" and target.get("role") in {"owner", "direksi"}:
+        raise HTTPException(status_code=403, detail="HRD tidak dapat mengubah data Owner/Direksi")
+    update = {k: v for k, v in body.model_dump().items() if v is not None}
+    if "password" in update:
+        update["password_hash"] = hash_password(update.pop("password"))
+    if user["role"] in APPROVER_ROLES:
+        return await _apply_update_employee(emp_id, update)
+    return await _create_request("update", user, payload=update, target_emp_id=emp_id,
+                                 summary=f"Ubah data karyawan: {target.get('name')}")
+
+
+@api_router.delete("/employees/{emp_id}")
+async def delete_employee(emp_id: str, user: dict = Depends(require_roles(HR_ROLES))):
+    if str(user["_id"]) == emp_id:
+        raise HTTPException(status_code=400, detail="Tidak dapat menghapus akun sendiri")
+    target = await db.users.find_one({"_id": ObjectId(emp_id)})
+    if not target:
+        raise HTTPException(status_code=404, detail="Karyawan tidak ditemukan")
+    if user["role"] == "hrd" and target.get("role") in {"owner", "direksi"}:
+        raise HTTPException(status_code=403, detail="HRD tidak dapat menghapus Owner/Direksi")
+    if user["role"] in APPROVER_ROLES:
+        await _apply_delete_employee(emp_id)
+        return {"ok": True}
+    return await _create_request("delete", user, target_emp_id=emp_id,
+                                 summary=f"Hapus karyawan: {target.get('name')}")
+
+
+# ----------------------------------------------------------------------------
+# Employee change requests (HRD -> Direksi approval)
+# ----------------------------------------------------------------------------
+@api_router.get("/employee-requests")
+async def list_employee_requests(status: Optional[str] = Query(None),
+                                 user: dict = Depends(require_roles(HR_ROLES))):
+    q = {}
+    if status:
+        q["status"] = status
+    if user["role"] not in APPROVER_ROLES:
+        q["requested_by"] = str(user["_id"])  # HRD hanya melihat permintaannya sendiri
+    reqs = await db.employee_requests.find(q).sort("created_at", -1).to_list(500)
+    return [req_public(r) for r in reqs]
+
+
+@api_router.get("/employee-requests/pending-count")
+async def pending_count(user: dict = Depends(require_roles(APPROVER_ROLES))):
+    n = await db.employee_requests.count_documents({"status": "pending"})
+    return {"count": n}
+
+
+@api_router.post("/employee-requests/{req_id}/approve")
+async def approve_request(req_id: str, user: dict = Depends(require_roles(APPROVER_ROLES))):
+    req = await db.employee_requests.find_one({"_id": ObjectId(req_id)})
+    if not req:
+        raise HTTPException(status_code=404, detail="Permintaan tidak ditemukan")
+    if req["status"] != "pending":
+        raise HTTPException(status_code=400, detail="Permintaan sudah diproses")
+    action = req["action"]
+    result = None
+    if action == "create":
+        result = await _apply_create_employee(req["payload"])
+    elif action == "update":
+        result = await _apply_update_employee(req["target_emp_id"], req.get("payload") or {})
+    elif action == "delete":
+        await _apply_delete_employee(req["target_emp_id"])
+    await db.employee_requests.update_one({"_id": req["_id"]}, {"$set": {
+        "status": "approved", "reviewed_by": str(user["_id"]),
+        "reviewed_by_name": user.get("name"), "reviewed_at": now_iso()}})
+    return {"ok": True, "result": result}
+
+
+@api_router.post("/employee-requests/{req_id}/reject")
+async def reject_request(req_id: str, body: RejectBody, user: dict = Depends(require_roles(APPROVER_ROLES))):
+    req = await db.employee_requests.find_one({"_id": ObjectId(req_id)})
+    if not req:
+        raise HTTPException(status_code=404, detail="Permintaan tidak ditemukan")
+    if req["status"] != "pending":
+        raise HTTPException(status_code=400, detail="Permintaan sudah diproses")
+    await db.employee_requests.update_one({"_id": req["_id"]}, {"$set": {
+        "status": "rejected", "reviewed_by": str(user["_id"]),
+        "reviewed_by_name": user.get("name"), "reviewed_at": now_iso(),
+        "reject_reason": body.reason or "Ditolak"}})
     return {"ok": True}
 
 
@@ -556,6 +701,8 @@ DEMO_USERS = [
      "department": "Direksi", "position": "Direktur Operasional"},
     {"name": "Agus Wijaya", "email": "manager@company.com", "role": "manager",
      "department": "Penjualan", "position": "Manager Penjualan"},
+    {"name": "Maya Anggraini", "email": "hrd@company.com", "role": "hrd",
+     "department": "HRD", "position": "Manager HRD"},
     {"name": "Dewi Lestari", "email": "dewi@company.com", "role": "staff",
      "department": "Penjualan", "position": "Sales Executive"},
     {"name": "Rizki Pratama", "email": "rizki@company.com", "role": "staff",
@@ -575,6 +722,7 @@ All demo accounts use password: **password123**
 | Owner | owner@company.com | password123 |
 | Direksi | direksi@company.com | password123 |
 | Manager | manager@company.com | password123 |
+| HRD | hrd@company.com | password123 |
 | Staff | dewi@company.com | password123 |
 | Staff | rizki@company.com | password123 |
 | Staff | nina@company.com | password123 |
@@ -587,8 +735,9 @@ All demo accounts use password: **password123**
 
 ## Notes
 - Frontend stores token in localStorage and sends `Authorization: Bearer <token>`.
-- Monitoring (dashboard/employees/all-attendance): roles owner, direksi, manager.
-- Management (create/update employees & offices): roles owner, direksi.
+- Monitoring (dashboard/employees/all-attendance): roles owner, direksi, manager, hrd.
+- Direct management (apply employees & offices): roles owner, direksi.
+- HRD can request employee create/update/delete (cannot touch owner/direksi roles); requests need owner/direksi approval via /api/employee-requests/{id}/approve.
 - Default office: "Kantor Pusat Jakarta" lat -6.208763 lng 106.845599 radius 250m, QR: OFFICE-HQJKT00001
 """
 

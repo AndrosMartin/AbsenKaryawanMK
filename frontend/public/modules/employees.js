@@ -1,7 +1,10 @@
 // Employee management (list + add/edit/delete for owner & direksi)
 export async function render(root, ctx) {
   const { ui } = ctx;
-  const canManage = ["owner", "direksi"].includes(ctx.user.role);
+  const role = ctx.user.role;
+  const canManage = ["owner", "direksi", "hrd"].includes(role);
+  const isHrd = role === "hrd";
+  const roleOptions = isHrd ? ["staff", "manager", "hrd"] : ["staff", "manager", "hrd", "direksi", "owner"];
   let list = [];
 
   root.innerHTML = `
@@ -13,6 +16,10 @@ export async function render(root, ctx) {
       </div>
       ${canManage ? `<button id="add-btn" data-testid="add-employee-btn" class="bg-slate-900 text-white px-4 py-2.5 rounded-lg text-sm font-medium hover:bg-slate-800 flex items-center gap-2"><i class="ph ph-plus"></i> Tambah Karyawan</button>` : ""}
     </div>
+    ${isHrd ? `<div data-testid="hrd-notice" class="flex items-start gap-3 bg-violet-50 border border-violet-200 rounded-xl px-4 py-3">
+      <i class="ph-fill ph-info text-violet-600 text-lg mt-0.5"></i>
+      <p class="text-sm text-violet-800">Sebagai <strong>HRD</strong>, setiap penambahan, perubahan, atau penghapusan karyawan akan dikirim sebagai <strong>permintaan</strong> dan baru berlaku setelah <strong>disetujui Direksi/Owner</strong>. Pantau status di menu <strong>Persetujuan</strong>.</p>
+    </div>` : ""}
     <div id="emp-table"></div>
   </div>
   <div id="modal-root"></div>`;
@@ -81,7 +88,7 @@ export async function render(root, ctx) {
             <div>
               <label class="block text-sm font-medium text-slate-700 mb-1">Role</label>
               <select id="f-role" data-testid="emp-role" class="w-full px-3 py-2 border border-slate-200 rounded-lg text-sm focus:ring-2 focus:ring-slate-900 focus:outline-none bg-white">
-                ${["staff", "manager", "direksi", "owner"].map((r) => `<option value="${r}" ${emp?.role === r ? "selected" : ""}>${ui.ROLE_LABELS[r]}</option>`).join("")}
+                ${roleOptions.map((r) => `<option value="${r}" ${emp?.role === r ? "selected" : ""}>${ui.ROLE_LABELS[r]}</option>`).join("")}
               </select>
             </div>
             <div><label class="block text-sm font-medium text-slate-700 mb-1">${isEdit ? "Reset Password (opsional)" : "Password"}</label><input id="f-pass" data-testid="emp-password" type="text" ${isEdit ? "" : "required"} placeholder="${isEdit ? "Kosongkan jika tidak diubah" : "password123"}" value="${isEdit ? "" : "password123"}" class="w-full px-3 py-2 border border-slate-200 rounded-lg text-sm focus:ring-2 focus:ring-slate-900 focus:outline-none" /></div>
@@ -107,15 +114,19 @@ export async function render(root, ctx) {
       };
       const pass = modalRoot.querySelector("#f-pass").value;
       try {
+        let res;
         if (isEdit) {
           if (pass) payload.password = pass;
-          await ctx.api.put("/employees/" + emp.id, payload);
-          ui.toast("Karyawan diperbarui", "success");
+          res = await ctx.api.put("/employees/" + emp.id, payload);
         } else {
           payload.email = modalRoot.querySelector("#f-email").value.trim();
           payload.password = pass;
-          await ctx.api.post("/employees", payload);
-          ui.toast("Karyawan ditambahkan", "success");
+          res = await ctx.api.post("/employees", payload);
+        }
+        if (res && res.pending) {
+          ui.toast("Permintaan dikirim. Menunggu verifikasi Direksi/Owner.", "info");
+        } else {
+          ui.toast(isEdit ? "Karyawan diperbarui" : "Karyawan ditambahkan", "success");
         }
         close();
         load();
@@ -128,9 +139,16 @@ export async function render(root, ctx) {
 
   async function doDelete(id) {
     const emp = list.find((x) => x.id === id);
-    if (!confirm(`Hapus karyawan "${emp.name}"? Data absensinya juga akan terhapus.`)) return;
-    try { await ctx.api.del("/employees/" + id); ui.toast("Karyawan dihapus", "success"); load(); }
-    catch (e) { ui.toast(e.message, "error"); }
+    const msg = isHrd
+      ? `Ajukan penghapusan karyawan "${emp.name}" untuk disetujui Direksi?`
+      : `Hapus karyawan "${emp.name}"? Data absensinya juga akan terhapus.`;
+    if (!confirm(msg)) return;
+    try {
+      const res = await ctx.api.del("/employees/" + id);
+      if (res && res.pending) ui.toast("Permintaan hapus dikirim. Menunggu verifikasi Direksi/Owner.", "info");
+      else ui.toast("Karyawan dihapus", "success");
+      load();
+    } catch (e) { ui.toast(e.message, "error"); }
   }
 
   if (canManage) root.querySelector("#add-btn").onclick = () => openModal(null);

@@ -4,6 +4,7 @@ export const ROLE_LABELS = {
   owner: "Owner / CEO",
   direksi: "Direksi",
   manager: "Manager",
+  hrd: "HRD",
   staff: "Staff",
 };
 
@@ -11,11 +12,15 @@ export const ROLE_BADGE = {
   owner: "bg-slate-900 text-white border-slate-900",
   direksi: "bg-indigo-50 text-indigo-700 border-indigo-200",
   manager: "bg-sky-50 text-sky-700 border-sky-200",
+  hrd: "bg-violet-50 text-violet-700 border-violet-200",
   staff: "bg-slate-100 text-slate-700 border-slate-200",
 };
 
-export const MONITOR_ROLES = ["owner", "direksi", "manager"];
+export const MONITOR_ROLES = ["owner", "direksi", "manager", "hrd"];
 export const MANAGE_ROLES = ["owner", "direksi"];
+export const HR_ROLES = ["owner", "direksi", "hrd"];
+export const APPROVER_ROLES = ["owner", "direksi"];
+export const HRD_ASSIGNABLE_ROLES = ["manager", "hrd", "staff"];
 
 export function h(html) {
   const t = document.createElement("template");

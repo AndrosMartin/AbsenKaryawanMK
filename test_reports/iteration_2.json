@@ -1,0 +1,49 @@
+{
+  "summary": "Frontend Playwright testing of HRD approval workflow on AbsensiPro. 7/8 review-request scenarios pass. ONE CRITICAL BUG: HRD sidebar is missing 4 nav items (nav-checkin, nav-history, nav-face, nav-profile) because the NAV roles arrays in /app/frontend/public/js/main.js hardcode only ['owner','direksi','manager','staff'] and exclude 'hrd'. All other HRD-flow features behave correctly: hrd-notice violet info banner shown, add-employee-btn visible, role dropdown correctly restricted to staff/manager/hrd, HRD create returns pending toast and is NOT inserted into employees table, HRD sees the pending request on approvals page WITHOUT approve/reject buttons, Owner sees pending request WITH approve/reject buttons, Owner approve moves the employee into the Karyawan table, Owner direct add appears immediately (no pending), Manager sees nav-employees but no add button and no nav-approvals, Staff sees only checkin/history/face/profile (no dashboard/monitoring/employees/approvals).",
+  "backend_issues": {
+    "critical": [],
+    "minor": []
+  },
+  "frontend_issues": {
+    "ui_bugs": [
+      {
+        "component": "Sidebar NAV (main.js)",
+        "issue": "HRD role is missing from NAV roles arrays for 4 routes (checkin, history, face, profile). Spec requires HRD to see: dashboard, checkin, history, monitoring, employees, approvals, face, profile (8 items). Actual HRD sidebar only shows: dashboard, monitoring, employees, approvals (4 items). Root cause: in /app/frontend/public/js/main.js the NAV entries for 'checkin', 'history', 'face', 'profile' use hardcoded roles arrays ['owner','direksi','manager','staff'] instead of including 'hrd'. As a side effect HRD cannot navigate to /#checkin, /#history, /#face, /#profile because navigate() falls back to allowedNav()[0].",
+        "selector": "[data-testid='nav-checkin'], [data-testid='nav-history'], [data-testid='nav-face'], [data-testid='nav-profile']",
+        "priority": "HIGH"
+      }
+    ],
+    "integration_issues": [],
+    "design_issues": [
+      {
+        "screen": "Global",
+        "issues": ["Tailwind CDN is in use (cdn.tailwindcss.com warning in console) — not production-ready; recommended to install Tailwind as PostCSS plugin or via CLI."]
+      }
+    ]
+  },
+  "test_report_links": [
+    "/app/test_reports/iteration_1.json",
+    "/app/backend/tests/test_absensipro.py"
+  ],
+  "action_items": [
+    "FIX in /app/frontend/public/js/main.js: add 'hrd' to the roles arrays of NAV entries id='checkin', 'history', 'face', 'profile'. Recommended: replace the hardcoded arrays with a shared constant (e.g. ALL_USERS = ['owner','direksi','manager','hrd','staff']) for these personal routes."
+  ],
+  "critical_code_review_comments": [
+    "main.js NAV roles for 'checkin'/'history'/'face'/'profile' are hardcoded ['owner','direksi','manager','staff'] — should include 'hrd' (and probably be exposed as ui.ALL_USERS constant for DRY).",
+    "employees.js: canManage hardcodes ['owner','direksi','hrd'] — should reuse ui.HR_ROLES to avoid drift.",
+    "approvals.js: isApprover hardcodes ['owner','direksi'] — should reuse ui.APPROVER_ROLES.",
+    "modules/employees.js openModal uses confirm()/prompt() for delete/reject which is fine but inconsistent with the rest of the app's modal UX.",
+    "Frontend still loading Tailwind from CDN (warning in console)."
+  ],
+  "updated_files": [],
+  "success_rate": {
+    "backend": "100% (curl-verified: HRD->pending, owner approve, owner direct, list pending for both HRD and owner)",
+    "frontend": "87% (7/8 review-request scenarios: HRD nav set incomplete)"
+  },
+  "test_credentials": "owner@company.com / direksi@company.com / manager@company.com / hrd@company.com / dewi@company.com — all password123",
+  "seed_data_creation": "Created several TEST_/test_ prefixed pending requests and approved employees during testing (e.g., test_hrd_*, test_retest_*, test_dbg_*, test_directadd_*). They live under TEST_/test_ email prefix so they're safe to leave or batch-delete by owner.",
+  "retest_needed": true,
+  "main_agent_can_self_test": true,
+  "context_for_next_testing_agent": "Backend lowercases emails on storage. When asserting visibility of a freshly-created email in the UI, compare case-insensitively (text.toLowerCase().includes(email.toLowerCase())). HRD demo account is Maya Anggraini, hrd@company.com / password123 (added in seed). The approvals.js renders payload.email in the card via payloadPreview, so email IS visible to both HRD and owner. Owner sees approve-{id}/reject-{id} buttons only on pending items; HRD never sees them. RBAC for manager (no add btn, no nav-approvals) and staff (only checkin/history/face/profile) is correct. The Tailwind CDN warning is benign for testing. The only required fix is adding 'hrd' to NAV roles for checkin/history/face/profile in main.js.",
+  "rca of the issue": "Bug: HRD sidebar missing 4 personal-route nav items. Reproduction: login as hrd@company.com/password123; observe sidebar contains only Dashboard/Monitoring/Karyawan/Persetujuan. Expected: also Absensi(checkin), Riwayat Saya(history), Wajah Saya(face), Profil(profile). RCA: /app/frontend/public/js/main.js defines NAV with explicit role arrays per item; entries for checkin/history/face/profile use ['owner','direksi','manager','staff'] which omits 'hrd'. allowedNav() filters by state.user.role inclusion, so HRD is excluded from these 4 routes. Mitigation: change those four arrays to include 'hrd' (or use ['owner','direksi','manager','hrd','staff']). Confirmed code review at lines 6-13 of main.js."
+}
