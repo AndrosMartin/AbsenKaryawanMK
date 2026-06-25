@@ -127,6 +127,40 @@ export async function detectDescriptor(videoEl) {
   return Array.from(det.descriptor);
 }
 
+// Full detection (box + landmarks + descriptor) for live auto-detect
+export async function detectFaceFull(videoEl) {
+  const fa = await loadFaceModels();
+  return await fa
+    .detectSingleFace(videoEl, new fa.TinyFaceDetectorOptions({ inputSize: 288, scoreThreshold: 0.4 }))
+    .withFaceLandmarks()
+    .withFaceDescriptor();
+}
+
+// Draw a gold tracking frame on a canvas overlaying the displayed video
+export function drawFaceBox(canvas, videoEl, det, color = "#E0B100") {
+  const w = videoEl.clientWidth, h = videoEl.clientHeight;
+  if (!w || !h) return;
+  if (canvas.width !== w || canvas.height !== h) { canvas.width = w; canvas.height = h; }
+  const ctx = canvas.getContext("2d");
+  ctx.clearRect(0, 0, w, h);
+  if (!det || !window.faceapi) return;
+  const r = window.faceapi.resizeResults(det, { width: w, height: h });
+  const b = r.detection.box;
+  const len = Math.min(b.width, b.height) * 0.28;
+  ctx.strokeStyle = color;
+  ctx.lineWidth = 3.5;
+  ctx.lineCap = "round";
+  const corners = [
+    [b.x, b.y, 1, 1], [b.x + b.width, b.y, -1, 1],
+    [b.x, b.y + b.height, 1, -1], [b.x + b.width, b.y + b.height, -1, -1],
+  ];
+  corners.forEach(([cx, cy, dx, dy]) => {
+    ctx.beginPath();
+    ctx.moveTo(cx, cy + dy * len); ctx.lineTo(cx, cy); ctx.lineTo(cx + dx * len, cy);
+    ctx.stroke();
+  });
+}
+
 export async function startCamera(videoEl) {
   const stream = await navigator.mediaDevices.getUserMedia({
     video: { facingMode: "user", width: { ideal: 640 }, height: { ideal: 480 } },

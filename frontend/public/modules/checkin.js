@@ -111,54 +111,52 @@ export async function render(root, ctx) {
     verifyBody.innerHTML = `
       <div class="relative aspect-video rounded-xl bg-ink overflow-hidden border border-slate-800 flex items-center justify-center">
         <video id="cam" autoplay muted playsinline class="w-full h-full object-cover"></video>
-        <div class="absolute inset-0 pointer-events-none flex items-center justify-center">
-          <div class="w-40 h-52 border-2 border-white/40 rounded-[40%]"></div>
+        <canvas id="face-canvas" class="absolute inset-0 w-full h-full pointer-events-none"></canvas>
+        <div id="scan-hint" class="absolute top-3 left-1/2 -translate-x-1/2 hidden">
+          <span class="inline-flex items-center gap-1.5 px-3 py-1 rounded-full bg-ink/70 text-gold text-xs font-medium backdrop-blur">
+            <i class="ph ph-scan"></i><span id="scan-hint-text">Mencari wajah…</span></span>
         </div>
         <div id="cam-overlay" class="absolute inset-0 bg-ink/80 flex flex-col items-center justify-center text-center text-white p-4">
-          <i class="ph ph-camera text-3xl text-slate-400"></i>
-          <p class="text-sm mt-2 text-slate-300">Aktifkan kamera untuk memulai</p>
-          <button id="start-cam" data-testid="start-camera" class="mt-3 bg-white text-slate-900 px-4 py-2 rounded-lg text-sm font-medium">Aktifkan Kamera</button>
+          <i class="ph ph-user-focus text-3xl text-gold"></i>
+          <p class="text-sm mt-2 text-slate-300">Aktifkan kamera untuk deteksi otomatis</p>
+          <button id="start-cam" data-testid="start-camera" class="mt-3 bg-gold text-ink px-4 py-2 rounded-lg text-sm font-semibold hover:bg-gold-500">Aktifkan Kamera</button>
         </div>
       </div>
       <button id="face-checkin" data-testid="face-checkin-btn" disabled
         class="mt-4 w-full bg-gold disabled:bg-slate-200 disabled:text-slate-400 text-ink py-3 rounded-lg text-sm font-semibold hover:bg-gold-500 flex items-center justify-center gap-2">
-        <i class="ph ph-fingerprint"></i> Verifikasi Wajah & Check-in
+        <i class="ph ph-fingerprint"></i> Check-in Manual
       </button>
-      <p id="face-msg" class="text-xs text-slate-400 mt-2 text-center">Posisikan wajah di dalam bingkai.</p>`;
+      <p id="face-msg" class="text-xs text-slate-400 mt-2 text-center">Deteksi wajah otomatis — wajah Anda akan dipindai begitu kamera aktif.</p>`;
 
     const video = verifyBody.querySelector("#cam");
+    const canvas = verifyBody.querySelector("#face-canvas");
     const overlay = verifyBody.querySelector("#cam-overlay");
+    const hint = verifyBody.querySelector("#scan-hint");
+    const hintText = verifyBody.querySelector("#scan-hint-text");
     const btn = verifyBody.querySelector("#face-checkin");
     const msg = verifyBody.querySelector("#face-msg");
 
-    verifyBody.querySelector("#start-cam").onclick = async () => {
-      try {
-        msg.textContent = "Memuat model pengenalan wajah…";
-        await ui.loadFaceModels();
-        stream = await ui.startCamera(video);
-        ctx.setStream(stream);
-        overlay.style.display = "none";
-        btn.disabled = false;
-        msg.textContent = "Kamera aktif. Posisikan wajah di dalam bingkai.";
-      } catch (e) {
-        msg.textContent = "Gagal mengakses kamera: " + e.message;
-      }
-    };
+    let lastDescriptor = null;
+    let stableCount = 0;
+    let autoFired = false;
 
-    btn.onclick = async () => {
+    function stopLoop() {
+      if (window.__faceLoop) { clearInterval(window.__faceLoop); window.__faceLoop = null; }
+    }
+
+    async function doFaceCheckin(descriptor) {
       if (busy) return;
-      if (today.checked_in) return ui.toast("Anda sudah check-in hari ini", "info");
-      if (!gps) return ui.toast("Lokasi GPS belum tersedia", "error");
-      busy = true;
-      btn.disabled = true;
-      msg.textContent = "Mendeteksi wajah…";
+      if (today.checked_in) return;
+      if (!gps) { ui.toast("Lokasi GPS belum tersedia", "error"); autoFired = false; return; }
+      busy = true; btn.disabled = true;
+      msg.textContent = "Wajah terdeteksi — memverifikasi & mencatat kehadiran…";
       try {
-        const descriptor = await ui.detectDescriptor(video);
-        if (!descriptor) { msg.textContent = "Wajah tidak terdeteksi, coba lagi."; busy = false; btn.disabled = false; return; }
-        msg.textContent = "Memverifikasi & mencatat kehadiran…";
+        const desc = descriptor || await ui.detectDescriptor(video);
+        if (!desc) { msg.textContent = "Wajah tidak terdeteksi, coba lagi."; busy = false; autoFired = false; btn.disabled = false; return; }
         const res = await ctx.api.post("/attendance/check-in", {
-          method: "face", lat: gps.lat, lng: gps.lng, descriptor,
+          method: "face", lat: gps.lat, lng: gps.lng, descriptor: desc,
         });
+        stopLoop();
         ui.stopCamera(stream); stream = null;
         ui.toast("Check-in berhasil! " + (res.status === "late" ? "(Terlambat)" : "(Tepat waktu)"), "success");
         today = { checked_in: true, ...res };
@@ -167,8 +165,54 @@ export async function render(root, ctx) {
       } catch (e) {
         msg.innerHTML = `<span class="text-rose-600">${e.message}</span>`;
         ui.toast(e.message, "error");
-      } finally { busy = false; btn.disabled = false; }
+        busy = false; autoFired = false; btn.disabled = false;
+      }
+    }
+
+    function startDetectLoop() {
+      stopLoop();
+      window.__faceLoop = setInterval(async () => {
+        if (busy || !stream) return;
+        let det;
+        try { det = await ui.detectFaceFull(video); } catch (e) { return; }
+        ui.drawFaceBox(canvas, video, det);
+        hint.classList.remove("hidden");
+        if (det && det.detection.score > 0.55) {
+          lastDescriptor = Array.from(det.descriptor);
+          btn.disabled = false;
+          stableCount++;
+          if (today.checked_in) {
+            hintText.textContent = "Sudah check-in";
+          } else if (stableCount < 3) {
+            hintText.textContent = "Wajah terdeteksi…";
+            msg.textContent = "Wajah terdeteksi, tahan posisi…";
+          } else if (!autoFired) {
+            autoFired = true;
+            hintText.textContent = "Memproses…";
+            doFaceCheckin(lastDescriptor);
+          }
+        } else {
+          stableCount = 0;
+          hintText.textContent = "Mencari wajah…";
+        }
+      }, 320);
+    }
+
+    verifyBody.querySelector("#start-cam").onclick = async () => {
+      try {
+        msg.textContent = "Memuat model pengenalan wajah…";
+        await ui.loadFaceModels();
+        stream = await ui.startCamera(video);
+        ctx.setStream(stream);
+        overlay.style.display = "none";
+        msg.textContent = "Kamera aktif — deteksi otomatis berjalan. Posisikan wajah Anda.";
+        startDetectLoop();
+      } catch (e) {
+        msg.textContent = "Gagal mengakses kamera: " + e.message;
+      }
     };
+
+    btn.onclick = () => doFaceCheckin(lastDescriptor);
   }
 
   // ---- QR TAB ----
@@ -229,6 +273,7 @@ export async function render(root, ctx) {
       b.classList.toggle("shadow-sm", on);
       b.classList.toggle("text-slate-500", !on);
     });
+    if (window.__faceLoop) { clearInterval(window.__faceLoop); window.__faceLoop = null; }
     if (stream) { ui.stopCamera(stream); stream = null; }
     if (qrScanner) { try { await qrScanner.stop(); } catch (e) {} qrScanner = null; }
     if (tab === "face") renderFaceTab(); else renderQrTab();

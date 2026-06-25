@@ -23,7 +23,7 @@ export async function render(root, ctx) {
       <div class="grid md:grid-cols-2 gap-6">
         <div class="relative aspect-square rounded-xl bg-ink overflow-hidden border border-slate-800 flex items-center justify-center">
           <video id="cam" autoplay muted playsinline class="w-full h-full object-cover"></video>
-          <div class="absolute inset-0 pointer-events-none flex items-center justify-center"><div class="w-44 h-56 border-2 border-white/40 rounded-[40%]"></div></div>
+          <canvas id="face-canvas" class="absolute inset-0 w-full h-full pointer-events-none"></canvas>
           <div id="overlay" class="absolute inset-0 bg-ink/85 flex flex-col items-center justify-center text-center p-4">
             <i class="ph ph-user-focus text-4xl text-slate-500"></i>
             <p class="text-slate-300 text-sm mt-2">Aktifkan kamera untuk mendaftar</p>
@@ -48,9 +48,14 @@ export async function render(root, ctx) {
   </div>`;
 
   const video = root.querySelector("#cam");
+  const canvas = root.querySelector("#face-canvas");
   const overlay = root.querySelector("#overlay");
   const enrollBtn = root.querySelector("#enroll-btn");
   const msg = root.querySelector("#face-msg");
+
+  function stopLoop() {
+    if (window.__faceLoop) { clearInterval(window.__faceLoop); window.__faceLoop = null; }
+  }
 
   root.querySelector("#start-cam").onclick = async () => {
     try {
@@ -59,20 +64,36 @@ export async function render(root, ctx) {
       stream = await ui.startCamera(video);
       ctx.setStream(stream);
       overlay.style.display = "none";
-      enrollBtn.disabled = false;
-      msg.textContent = "Kamera aktif. Posisikan wajah lalu daftarkan.";
+      msg.textContent = "Kamera aktif — mendeteksi wajah secara otomatis…";
+      stopLoop();
+      window.__faceLoop = setInterval(async () => {
+        if (!stream) return;
+        let det;
+        try { det = await ui.detectFaceFull(video); } catch (e) { return; }
+        ui.drawFaceBox(canvas, video, det);
+        if (det && det.detection.score > 0.55) {
+          descriptor = Array.from(det.descriptor);
+          enrollBtn.disabled = false;
+          msg.innerHTML = `<span class="text-emerald-600 font-medium">Wajah terdeteksi</span> — klik "${enrolled ? "Perbarui" : "Daftarkan"} Wajah".`;
+        } else {
+          descriptor = null;
+          enrollBtn.disabled = true;
+          msg.textContent = "Mencari wajah… posisikan wajah di dalam bingkai.";
+        }
+      }, 320);
     } catch (e) { msg.textContent = "Gagal mengakses kamera: " + e.message; }
   };
 
   enrollBtn.onclick = async () => {
     enrollBtn.disabled = true;
-    msg.textContent = "Mendeteksi wajah…";
+    msg.textContent = "Mendaftarkan wajah…";
     try {
-      descriptor = await ui.detectDescriptor(video);
-      if (!descriptor) { msg.textContent = "Wajah tidak terdeteksi, coba lagi."; enrollBtn.disabled = false; return; }
-      await ctx.api.post("/face/enroll", { descriptor });
+      const desc = descriptor || await ui.detectDescriptor(video);
+      if (!desc) { msg.textContent = "Wajah tidak terdeteksi, coba lagi."; enrollBtn.disabled = false; return; }
+      await ctx.api.post("/face/enroll", { descriptor: desc });
       await ctx.refreshUser();
       ui.toast("Wajah berhasil didaftarkan!", "success");
+      stopLoop();
       ui.stopCamera(stream); stream = null;
       ctx.navigate("face");
     } catch (e) {
