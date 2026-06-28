@@ -355,7 +355,8 @@ def build():
         'JWT_SECRET="GANTI-dengan-string-acak-panjang-64-karakter"\n'
         'ADMIN_EMAIL="owner@perusahaan.co.id"\n'
         'ADMIN_PASSWORD="GANTI-password-kuat"\n'
-        'WORK_START="09:00"',
+        'WORK_START="09:00"\n'
+        'SEED_DEMO="false"   # WAJIB false di produksi: hanya akun Owner yang dibuat',
         title="Contoh isi backend/.env")
     pdf.code(
         "python3 -c \"import secrets; print(secrets.token_hex(32))\"",
@@ -441,8 +442,10 @@ def build():
 
     pdf.h1("10", "Keamanan Produksi")
     pdf.bullets([
+        "WAJIB set SEED_DEMO=\"false\" agar akun demo (direksi/manager/hrd/staff contoh) TIDAK dibuat. "
+        "Hanya akun Owner (dari ADMIN_EMAIL/ADMIN_PASSWORD) yang dibuat saat pertama kali jalan.",
         "WAJIB ganti JWT_SECRET dengan string acak panjang (token_hex 32).",
-        "WAJIB ganti ADMIN_PASSWORD default; segera ganti password seluruh akun contoh (demo).",
+        "WAJIB ganti ADMIN_PASSWORD default dengan password kuat milik Anda.",
         "Set CORS_ORIGINS hanya ke domain resmi Anda (bukan '*').",
         "Aktifkan firewall: izinkan hanya port 80, 443, dan 22 (SSH). MongoDB jangan diekspos ke publik.",
         "Pertimbangkan menghapus/menonaktifkan akun demo bawaan setelah go-live.",
@@ -486,7 +489,7 @@ def build():
         "curl http://127.0.0.1:8001/api/ memberi respons.",
         "Nginx menyajikan frontend pada domain.",
         "HTTPS aktif dan valid (gembok hijau di browser).",
-        "JWT_SECRET, ADMIN_PASSWORD, dan CORS_ORIGINS sudah diganti untuk produksi.",
+        "JWT_SECRET, ADMIN_PASSWORD, CORS_ORIGINS, dan SEED_DEMO=false sudah diset untuk produksi.",
         "Login berhasil; kamera & GPS berfungsi pada HTTPS.",
     ])
     pdf.h2("Masalah Umum")

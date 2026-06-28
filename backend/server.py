@@ -32,6 +32,7 @@ JWT_ALGORITHM = "HS256"
 TZ = ZoneInfo("Asia/Jakarta")
 WORK_START = os.environ.get("WORK_START", "09:00")
 FACE_MATCH_THRESHOLD = 0.55
+SEED_DEMO = os.environ.get("SEED_DEMO", "true").strip().lower() == "true"
 
 MONITOR_ROLES = {"owner", "direksi", "manager", "hrd"}
 MANAGE_ROLES = {"owner", "direksi"}        # dapat menerapkan perubahan langsung
@@ -780,8 +781,10 @@ async def _ensure_indexes():
     await db.attendance.create_index([("user_id", 1), ("date", 1)])
 
 
-async def _seed_users(admin_email: str, admin_password: str):
-    for i, d in enumerate(DEMO_USERS):
+async def _seed_users(admin_email: str, admin_password: str, demo: bool = True):
+    # In production (demo=False) only the Owner admin account is created.
+    users = DEMO_USERS if demo else DEMO_USERS[:1]
+    for i, d in enumerate(users):
         email = admin_email if d["email"] is None else d["email"]
         pwd = admin_password if email == admin_email else "password123"
         existing = await db.users.find_one({"email": email})
@@ -844,11 +847,14 @@ def _write_test_credentials():
 
 async def seed():
     await _ensure_indexes()
-    await _seed_users(os.environ["ADMIN_EMAIL"], os.environ["ADMIN_PASSWORD"])
-    await _seed_office()
-    await _seed_attendance_history()
-    logger.info("Seed complete.")
-    _write_test_credentials()
+    await _seed_users(os.environ["ADMIN_EMAIL"], os.environ["ADMIN_PASSWORD"], demo=SEED_DEMO)
+    if SEED_DEMO:
+        await _seed_office()
+        await _seed_attendance_history()
+        _write_test_credentials()
+        logger.info("Seed complete (DEMO mode: demo accounts & sample data created).")
+    else:
+        logger.info("Seed complete (PRODUCTION mode: only Owner admin account created).")
 
 
 @app.on_event("startup")
