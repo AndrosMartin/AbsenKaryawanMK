@@ -457,14 +457,18 @@ def _summarize_today(users: list, rec_by_user: dict) -> dict:
 
 
 async def _seven_day_trend() -> list:
+    days = [datetime.now(TZ) - timedelta(days=i) for i in range(6, -1, -1)]
+    dates = [d.strftime("%Y-%m-%d") for d in days]
+    recs = await db.attendance.find({"date": {"$in": dates}}).to_list(5000)
+    counts = {dt: {"present": 0, "late": 0} for dt in dates}
+    for r in recs:
+        c = counts.get(r.get("date"))
+        if c and r.get("status") in ("present", "late"):
+            c[r["status"]] += 1
     trend = []
-    for i in range(6, -1, -1):
-        day = datetime.now(TZ) - timedelta(days=i)
-        date = day.strftime("%Y-%m-%d")
-        day_recs = await db.attendance.find({"date": date}).to_list(2000)
-        p = sum(1 for r in day_recs if r.get("status") == "present")
-        l = sum(1 for r in day_recs if r.get("status") == "late")
-        trend.append({"date": date, "label": day.strftime("%a"), "present": p, "late": l, "total": p + l})
+    for day, dt in zip(days, dates):
+        p, l = counts[dt]["present"], counts[dt]["late"]
+        trend.append({"date": dt, "label": day.strftime("%a"), "present": p, "late": l, "total": p + l})
     return trend
 
 
