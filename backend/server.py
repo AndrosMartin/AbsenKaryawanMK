@@ -416,7 +416,7 @@ async def my_attendance(user: dict = Depends(get_current_user), limit: int = 60)
 async def all_attendance(date: Optional[str] = Query(None),
                          user: dict = Depends(require_roles(MONITOR_ROLES))):
     date = date or today_str()
-    users = await db.users.find().to_list(1000)
+    users = await db.users.find({}, {"password_hash": 0}).to_list(1000)
     recs = await db.attendance.find({"date": date}).to_list(2000)
     rec_by_user = {r["user_id"]: r for r in recs}
     rows = []
@@ -478,7 +478,7 @@ def _recent_activity(recs: list, users: list) -> list:
 @api_router.get("/dashboard/stats")
 async def dashboard_stats(user: dict = Depends(require_roles(MONITOR_ROLES))):
     date = today_str()
-    users = await db.users.find().to_list(1000)
+    users = await db.users.find({}, {"password_hash": 0}).to_list(1000)
     total = len(users)
     recs = await db.attendance.find({"date": date}).to_list(2000)
     rec_by_user = {r["user_id"]: r for r in recs}
@@ -572,7 +572,7 @@ def _guard_hrd_role(requester: dict, role: Optional[str]):
 
 @api_router.get("/employees")
 async def list_employees(user: dict = Depends(require_roles(MONITOR_ROLES))):
-    users = await db.users.find().sort("created_at", 1).to_list(1000)
+    users = await db.users.find({}, {"password_hash": 0}).sort("created_at", 1).to_list(1000)
     return [public_user(u) for u in users]
 
 
