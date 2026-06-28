@@ -53,25 +53,6 @@ export async function render(root, ctx) {
             <span id="login-btn-text">Masuk</span>
           </button>
         </form>
-
-        <div class="mt-8">
-          <p class="text-xs font-medium text-slate-400 uppercase tracking-widest mb-3">Akun demo</p>
-          <div class="grid grid-cols-2 gap-2">
-            ${[
-              ["owner@company.com", "Owner"],
-              ["direksi@company.com", "Direksi"],
-              ["manager@company.com", "Manager"],
-              ["hrd@company.com", "HRD"],
-              ["dewi@company.com", "Staff"],
-            ].map(([em, lbl]) => `
-              <button data-demo="${em}" data-testid="demo-${lbl.toLowerCase()}"
-                class="text-left px-3 py-2 rounded-lg border border-slate-200 bg-white hover:border-gold transition-colors">
-                <p class="text-xs font-semibold text-slate-900">${lbl}</p>
-                <p class="text-[10px] text-slate-400 truncate font-mono">${em}</p>
-              </button>`).join("")}
-          </div>
-          <p class="text-[11px] text-slate-400 mt-3">Password semua akun demo: <span class="font-mono text-slate-600">password123</span></p>
-        </div>
       </div>
     </div>
   </div>`;
@@ -79,13 +60,6 @@ export async function render(root, ctx) {
   const form = root.querySelector("#login-form");
   const errEl = root.querySelector("#login-error");
   const btnText = root.querySelector("#login-btn-text");
-
-  root.querySelectorAll("[data-demo]").forEach((b) => {
-    b.onclick = () => {
-      root.querySelector("#email").value = b.getAttribute("data-demo");
-      root.querySelector("#password").value = "password123";
-    };
-  });
 
   form.onsubmit = async (e) => {
     e.preventDefault();
