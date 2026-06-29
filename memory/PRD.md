@@ -39,6 +39,12 @@ Play CDN native, modul dipanggil dinamis dalam 1 index. Desain dashboard profesi
 - **Role HRD + workflow persetujuan**: HRD bisa ajukan CRUD karyawan (tidak bisa set role owner/direksi); perubahan masuk antrian `employee_requests` (pending) dan baru berlaku setelah disetujui Owner/Direksi. Owner/Direksi tetap langsung. Endpoint: `GET /api/employee-requests`, `/approve`, `/reject`, `/pending-count`. Halaman frontend "Persetujuan" (approvals.js). Seed user hrd@company.com.
 - Verified: backend curl + pytest 31/31; frontend testing agent iteration_2 (HRD nav bug ditemukan & diperbaiki).
 
+## Implemented (2026-06-29) — Rekap & Export Monitoring
+- **Filter periode di Monitoring (Status Karyawan)**: Harian (1 tanggal), Rentang Tanggal (custom), Minggu Ini, Bulan Ini, Tahun Ini + pencarian nama/departemen. Mode rentang menampilkan tabel **rekap per-karyawan** (Hadir, Terlambat, Tidak Hadir, Total Hadir / Hari Kerja, % Kehadiran) dengan kartu ringkasan Hari Kerja/Hadir Tepat/Terlambat/Tidak Hadir.
+- **Backend**: `GET /api/attendance/summary?start&end&q&user_id` (MONITOR_ROLES) → {workdays, rows[], totals}. `workdays` = Senin–Jumat dalam rentang dibatasi s/d hari ini. `absent = max(0, workdays - attended)`.
+- **Export**: `GET /api/attendance/summary/export?format=pdf|xlsx&...` → file PDF (fpdf2, landscape A4 berlogo brand) atau Excel (openpyxl, header gold/hitam). Frontend mengunduh via fetch+Bearer→blob (tombol PDF/Excel).
+- Verified: testing agent iteration_5 — backend 11/11 pytest PASS, frontend semua 5 mode + pencarian + unduhan (200, Content-Type benar), 0 console error.
+
 ## Implemented (2026-06-29) — Web Push Notification
 - **Web Push (VAPID)**: backend `pywebpush` + self-generated VAPID keys di `backend/.env` (VAPID_PUBLIC/PRIVATE_KEY, VAPID_SUBJECT). Koleksi `push_subscriptions` (unique index `endpoint`). Endpoint: `GET /api/push/vapid-public-key`, `POST /api/push/subscribe`, `POST /api/push/unsubscribe`, `GET /api/push/status`. Helper `send_push_to_users()` no-op aman bila belum ada subscription / VAPID; auto-hapus subscription mati (404/410).
 - **Trigger push**: (1) pengajuan baru HRD → ke Owner/Direksi; (2) pengajuan disetujui/ditolak → ke pengaju (HRD); (3) check-in TELAT → ke karyawan ybs + Owner/Direksi; (4) **pengingat absen terjadwal** harian via APScheduler cron (env `REMINDER_TIME`=08:00 Asia/Jakarta) ke karyawan yang belum check-in.
