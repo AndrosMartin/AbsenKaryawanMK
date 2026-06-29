@@ -39,8 +39,13 @@ Play CDN native, modul dipanggil dinamis dalam 1 index. Desain dashboard profesi
 - **Role HRD + workflow persetujuan**: HRD bisa ajukan CRUD karyawan (tidak bisa set role owner/direksi); perubahan masuk antrian `employee_requests` (pending) dan baru berlaku setelah disetujui Owner/Direksi. Owner/Direksi tetap langsung. Endpoint: `GET /api/employee-requests`, `/approve`, `/reject`, `/pending-count`. Halaman frontend "Persetujuan" (approvals.js). Seed user hrd@company.com.
 - Verified: backend curl + pytest 31/31; frontend testing agent iteration_2 (HRD nav bug ditemukan & diperbaiki).
 
-## Implemented (2026-06-29)
-- **PWA / Installable App (APK Opsi C)**: Tambah `manifest.json`, service worker `sw.js` (aman: skip `/api` & cross-origin, navigasi network-first, static stale-while-revalidate), ikon app (192/512/maskable/apple-touch) di `/icons/`, meta tag PWA + registrasi SW di `index.html`. Aplikasi bisa "Add to Home Screen".
+## Implemented (2026-06-29) — Web Push Notification
+- **Web Push (VAPID)**: backend `pywebpush` + self-generated VAPID keys di `backend/.env` (VAPID_PUBLIC/PRIVATE_KEY, VAPID_SUBJECT). Koleksi `push_subscriptions` (unique index `endpoint`). Endpoint: `GET /api/push/vapid-public-key`, `POST /api/push/subscribe`, `POST /api/push/unsubscribe`, `GET /api/push/status`. Helper `send_push_to_users()` no-op aman bila belum ada subscription / VAPID; auto-hapus subscription mati (404/410).
+- **Trigger push**: (1) pengajuan baru HRD → ke Owner/Direksi; (2) pengajuan disetujui/ditolak → ke pengaju (HRD); (3) check-in TELAT → ke karyawan ybs + Owner/Direksi; (4) **pengingat absen terjadwal** harian via APScheduler cron (env `REMINDER_TIME`=08:00 Asia/Jakarta) ke karyawan yang belum check-in.
+- **Frontend**: `js/push.js` (subscribe/unsubscribe/status + VAPID key→Uint8Array), service worker `sw.js` handle event `push` & `notificationclick` (CACHE v2), toggle "Notifikasi Push" di halaman Profil (data-testid push-card / push-toggle-btn), auto-refresh subscription saat login bila izin sudah granted.
+- Verified: testing agent iteration_4 — backend 6/6 push tests PASS, tanpa regresi (login + 9 nav OK). Catatan: alur PushManager.subscribe TIDAK bisa diuji di headless Chromium (izin notifikasi selalu 'denied') — perlu diverifikasi di perangkat nyata (Android Chrome). Toggle menangani state denied dengan benar ('Diblokir').
+
+## Implemented (2026-06-29) — PWA / APK: Tambah `manifest.json`, service worker `sw.js` (aman: skip `/api` & cross-origin, navigasi network-first, static stale-while-revalidate), ikon app (192/512/maskable/apple-touch) di `/icons/`, meta tag PWA + registrasi SW di `index.html`. Aplikasi bisa "Add to Home Screen".
 - **Setup Capacitor untuk APK asli** di `/app/mobile/` (`capacitor.config.json` server.url ke deployment, `package.json`, `AndroidManifest.permissions.xml` untuk Kamera/GPS, `PANDUAN_APK.md` panduan build .apk lengkap dalam Bahasa Indonesia).
 - **Perbaikan `.gitignore`**: hapus baris `.env`, `.env.*`, `*.env` (blocker deployment Emergent).
 - Verified: frontend testing agent iteration_3 — 4/4 skenario PWA PASS, tanpa regresi (login Owner + dashboard tetap normal dengan SW aktif).
