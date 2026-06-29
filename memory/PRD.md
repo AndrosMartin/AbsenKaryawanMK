@@ -39,6 +39,13 @@ Play CDN native, modul dipanggil dinamis dalam 1 index. Desain dashboard profesi
 - **Role HRD + workflow persetujuan**: HRD bisa ajukan CRUD karyawan (tidak bisa set role owner/direksi); perubahan masuk antrian `employee_requests` (pending) dan baru berlaku setelah disetujui Owner/Direksi. Owner/Direksi tetap langsung. Endpoint: `GET /api/employee-requests`, `/approve`, `/reject`, `/pending-count`. Halaman frontend "Persetujuan" (approvals.js). Seed user hrd@company.com.
 - Verified: backend curl + pytest 31/31; frontend testing agent iteration_2 (HRD nav bug ditemukan & diperbaiki).
 
+## Implemented (2026-06-29)
+- **PWA / Installable App (APK Opsi C)**: Tambah `manifest.json`, service worker `sw.js` (aman: skip `/api` & cross-origin, navigasi network-first, static stale-while-revalidate), ikon app (192/512/maskable/apple-touch) di `/icons/`, meta tag PWA + registrasi SW di `index.html`. Aplikasi bisa "Add to Home Screen".
+- **Setup Capacitor untuk APK asli** di `/app/mobile/` (`capacitor.config.json` server.url ke deployment, `package.json`, `AndroidManifest.permissions.xml` untuk Kamera/GPS, `PANDUAN_APK.md` panduan build .apk lengkap dalam Bahasa Indonesia).
+- **Perbaikan `.gitignore`**: hapus baris `.env`, `.env.*`, `*.env` (blocker deployment Emergent).
+- Verified: frontend testing agent iteration_3 — 4/4 skenario PWA PASS, tanpa regresi (login Owner + dashboard tetap normal dengan SW aktif).
+- Catatan: file .apk harus di-build user di komputer (Android Studio); server tidak punya Android SDK.
+
 ## Backlog (next)
 - P1: Export laporan (CSV/PDF) kehadiran per periode.
 - P1: Jam kerja/shift & toleransi keterlambatan yang dapat dikonfigurasi via UI.
