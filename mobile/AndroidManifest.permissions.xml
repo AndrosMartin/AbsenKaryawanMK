@@ -1,0 +1,13 @@
+<!-- Konten ini akan disalin ke android/app/src/main/AndroidManifest.xml setelah `cap add android` -->
+<!-- Letakkan di dalam tag <manifest> (sebelum <application>) -->
+
+<uses-permission android:name="android.permission.INTERNET" />
+<uses-permission android:name="android.permission.ACCESS_NETWORK_STATE" />
+
+<!-- Kamera (verifikasi wajah & scan QR) -->
+<uses-permission android:name="android.permission.CAMERA" />
+<uses-feature android:name="android.hardware.camera" android:required="false" />
+
+<!-- Lokasi GPS (geofence absensi) -->
+<uses-permission android:name="android.permission.ACCESS_FINE_LOCATION" />
+<uses-permission android:name="android.permission.ACCESS_COARSE_LOCATION" />
