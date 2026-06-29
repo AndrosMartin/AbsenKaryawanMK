@@ -6,6 +6,7 @@ ROOT_DIR = Path(__file__).parent
 load_dotenv(ROOT_DIR / '.env')
 
 from fastapi import FastAPI, APIRouter, HTTPException, Depends, Request, Query
+from fastapi.responses import Response
 from starlette.middleware.cors import CORSMiddleware
 from motor.motor_asyncio import AsyncIOMotorClient
 from bson import ObjectId
@@ -21,6 +22,7 @@ import jwt
 import secrets
 import json
 import asyncio
+import io
 from pywebpush import webpush, WebPushException
 from apscheduler.schedulers.asyncio import AsyncIOScheduler
 from apscheduler.triggers.cron import CronTrigger
@@ -514,8 +516,166 @@ async def all_attendance(date: Optional[str] = Query(None),
 
 
 # ----------------------------------------------------------------------------
-# Dashboard stats
+# Attendance summary (rekap) + export PDF/Excel
 # ----------------------------------------------------------------------------
+def _count_workdays(start: str, end: str) -> int:
+    """Jumlah hari kerja (Senin–Jumat) dalam rentang, dibatasi s/d hari ini."""
+    s = datetime.strptime(start, "%Y-%m-%d").date()
+    e = datetime.strptime(end, "%Y-%m-%d").date()
+    today = datetime.now(TZ).date()
+    if e > today:
+        e = today
+    n, d = 0, s
+    while d <= e:
+        if d.weekday() < 5:
+            n += 1
+        d += timedelta(days=1)
+    return n
+
+
+async def _build_summary(start: str, end: str,
+                         user_id: Optional[str] = None, q: Optional[str] = None) -> dict:
+    users = await db.users.find({}, {"password_hash": 0}).sort("name", 1).to_list(1000)
+    if user_id:
+        users = [u for u in users if str(u["_id"]) == user_id]
+    if q:
+        ql = q.lower()
+        users = [u for u in users
+                 if ql in ((u.get("name") or "") + " " + (u.get("department") or "")).lower()]
+    uids = [str(u["_id"]) for u in users]
+    recs = await db.attendance.find(
+        {"date": {"$gte": start, "$lte": end}, "user_id": {"$in": uids}}).to_list(50000)
+    workdays = _count_workdays(start, end)
+    agg = {}
+    for r in recs:
+        a = agg.setdefault(r["user_id"], {"present": 0, "late": 0, "attended": 0})
+        st = r.get("status")
+        if st == "present":
+            a["present"] += 1
+        elif st == "late":
+            a["late"] += 1
+        if r.get("check_in"):
+            a["attended"] += 1
+    rows, tot = [], {"present": 0, "late": 0, "absent": 0, "attended": 0}
+    for u in users:
+        a = agg.get(str(u["_id"]), {"present": 0, "late": 0, "attended": 0})
+        attended = a["attended"]
+        absent = max(0, workdays - attended)
+        rate = round(attended / workdays * 100, 1) if workdays else 0
+        rows.append({
+            "user_id": str(u["_id"]), "employee_id": u.get("employee_id"),
+            "name": u.get("name"), "department": u.get("department"),
+            "position": u.get("position"), "role": u.get("role"),
+            "present": a["present"], "late": a["late"], "absent": absent,
+            "attended": attended, "workdays": workdays, "rate": rate,
+        })
+        tot["present"] += a["present"]
+        tot["late"] += a["late"]
+        tot["attended"] += attended
+        tot["absent"] += absent
+    return {"start": start, "end": end, "workdays": workdays, "rows": rows, "totals": tot}
+
+
+@api_router.get("/attendance/summary")
+async def attendance_summary(start: str = Query(...), end: str = Query(...),
+                             user_id: Optional[str] = Query(None), q: Optional[str] = Query(None),
+                             user: dict = Depends(require_roles(MONITOR_ROLES))):
+    return await _build_summary(start, end, user_id, q)
+
+
+def _latin(s) -> str:
+    return str(s or "").encode("latin-1", "replace").decode("latin-1")
+
+
+def _xlsx_bytes(data: dict) -> bytes:
+    from openpyxl import Workbook
+    from openpyxl.styles import Font, PatternFill, Alignment
+    wb = Workbook()
+    ws = wb.active
+    ws.title = "Rekap Absensi"
+    ws.append(["Rekap Absensi Karyawan — MitraKeuangan"])
+    ws.append([f"Periode: {data['start']} s/d {data['end']}    Hari kerja: {data['workdays']}"])
+    ws.append([])
+    headers = ["ID Karyawan", "Nama", "Departemen", "Posisi", "Hadir Tepat",
+               "Terlambat", "Tidak Hadir", "Total Hadir", "Hari Kerja", "Kehadiran (%)"]
+    ws.append(headers)
+    head_row = ws.max_row
+    fill = PatternFill("solid", fgColor="0B0B0C")
+    for c in ws[head_row]:
+        c.font = Font(bold=True, color="E0B100")
+        c.fill = fill
+        c.alignment = Alignment(horizontal="center")
+    for r in data["rows"]:
+        ws.append([r["employee_id"], r["name"], r["department"], r["position"],
+                   r["present"], r["late"], r["absent"], r["attended"],
+                   r["workdays"], r["rate"]])
+    t = data["totals"]
+    ws.append([])
+    total_row = ["", "TOTAL", "", "", t["present"], t["late"], t["absent"], t["attended"], "", ""]
+    ws.append(total_row)
+    for c in ws[ws.max_row]:
+        c.font = Font(bold=True)
+    widths = [14, 26, 18, 20, 12, 11, 12, 12, 11, 14]
+    for i, w in enumerate(widths, 1):
+        ws.column_dimensions[chr(64 + i)].width = w
+    buf = io.BytesIO()
+    wb.save(buf)
+    return buf.getvalue()
+
+
+def _pdf_bytes(data: dict) -> bytes:
+    from fpdf import FPDF
+    pdf = FPDF(orientation="L", unit="mm", format="A4")
+    pdf.add_page()
+    pdf.set_font("Helvetica", "B", 14)
+    pdf.cell(0, 8, "Rekap Absensi Karyawan - MitraKeuangan", new_x="LMARGIN", new_y="NEXT")
+    pdf.set_font("Helvetica", "", 9)
+    pdf.cell(0, 6, f"Periode: {data['start']} s/d {data['end']}    Hari kerja: {data['workdays']}",
+             new_x="LMARGIN", new_y="NEXT")
+    pdf.ln(2)
+    cols = [("No", 10), ("ID", 22), ("Nama", 55), ("Departemen", 38), ("Hadir", 18),
+            ("Telat", 16), ("Absen", 16), ("Total", 16), ("Hr Kerja", 20), ("%", 16)]
+    pdf.set_font("Helvetica", "B", 8)
+    pdf.set_fill_color(11, 11, 12)
+    pdf.set_text_color(224, 177, 0)
+    for h, w in cols:
+        pdf.cell(w, 7, h, border=1, fill=True, align="C")
+    pdf.ln(7)
+    pdf.set_text_color(0, 0, 0)
+    pdf.set_font("Helvetica", "", 8)
+    for i, r in enumerate(data["rows"], 1):
+        vals = [str(i), _latin(r["employee_id"]), _latin(r["name"])[:34],
+                _latin(r.get("department") or "-")[:24], str(r["present"]), str(r["late"]),
+                str(r["absent"]), str(r["attended"]), str(r["workdays"]), str(r["rate"])]
+        for (h, w), v in zip(cols, vals):
+            pdf.cell(w, 6, v, border=1, align="C" if h not in ("Nama", "Departemen", "ID") else "L")
+        pdf.ln(6)
+    t = data["totals"]
+    pdf.set_font("Helvetica", "B", 8)
+    pdf.cell(10 + 22 + 55 + 38, 7, "TOTAL", border=1, align="R")
+    for v, w in [(t["present"], 18), (t["late"], 16), (t["absent"], 16), (t["attended"], 16)]:
+        pdf.cell(w, 7, str(v), border=1, align="C")
+    pdf.cell(20, 7, "", border=1)
+    pdf.cell(16, 7, "", border=1)
+    out = pdf.output()
+    return bytes(out)
+
+
+@api_router.get("/attendance/summary/export")
+async def export_summary(format: str = Query("xlsx"), start: str = Query(...), end: str = Query(...),
+                         user_id: Optional[str] = Query(None), q: Optional[str] = Query(None),
+                         user: dict = Depends(require_roles(MONITOR_ROLES))):
+    data = await _build_summary(start, end, user_id, q)
+    fname = f"rekap-absensi-{start}_sd_{end}"
+    if format == "pdf":
+        content = _pdf_bytes(data)
+        return Response(content=content, media_type="application/pdf",
+                        headers={"Content-Disposition": f'attachment; filename="{fname}.pdf"'})
+    content = _xlsx_bytes(data)
+    return Response(
+        content=content,
+        media_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+        headers={"Content-Disposition": f'attachment; filename="{fname}.xlsx"'})
 def _summarize_today(users: list, rec_by_user: dict) -> dict:
     present = late = 0
     dept_map = {}

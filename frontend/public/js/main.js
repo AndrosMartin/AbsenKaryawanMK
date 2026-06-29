@@ -52,7 +52,7 @@ async function navigate(route) {
   const content = document.getElementById("app-content");
   content.innerHTML = `<div class="flex items-center justify-center py-32 text-slate-400"><i class="ph ph-circle-notch spin text-3xl"></i></div>`;
   try {
-    const mod = await import(`/modules/${route}.js?v=9`);
+    const mod = await import(`/modules/${route}.js?v=10`);
     content.innerHTML = "";
     await mod.render(content, ctx);
   } catch (e) {
@@ -246,7 +246,7 @@ function startClock() {
 
 async function renderLogin() {
   document.getElementById("app").innerHTML = "";
-  const mod = await import("/modules/login.js?v=9");
+  const mod = await import("/modules/login.js?v=10");
   await mod.render(document.getElementById("app"), {
     api, ui,
     onLogin: async (token, user) => {

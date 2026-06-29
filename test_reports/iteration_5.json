@@ -1,0 +1,42 @@
+{
+  "summary": "Period rekap + PDF/Excel export feature fully tested end-to-end. Backend (11/11 pytest pass): /api/attendance/summary returns correct {start,end,workdays,rows[],totals{present,late,absent,attended}} shape; workdays counts Mon-Fri capped by today; q and user_id filters narrow rows correctly; /api/attendance/summary/export returns 200 with application/pdf (file starts with %PDF) and application/vnd.openxmlformats-officedocument.spreadsheetml.sheet (valid zip with xl/* entries), default format=xlsx; both endpoints reject unauthenticated requests with 401. Frontend (manual playwright walkthrough on preview URL): owner login works, Monitoring page renders with data-testid monitoring-page, default Harian mode shows monitoring-row + single date picker + Total/Tepat Waktu/Terlambat/Tidak Hadir cards; switching to Bulan Ini / Minggu Ini / Tahun Ini swaps to rekap-row table and Hari Kerja/Hadir Tepat/Terlambat/Tidak Hadir cards (1 rekap row for owner Budi Santoso with absent=21=workdays as expected for SEED_DEMO=false); Rentang Tanggal reveals monitoring-start + monitoring-end (both editable, disabled=false) and re-queries on change; search box filters client-side in Harian and re-queries backend in rekap mode (q=zzz returns 0 rows); download-pdf-btn -> network response 200 application/pdf, download-excel-btn -> network response 200 spreadsheetml.sheet; success toast 'Unduhan dimulai' shown; zero console errors.",
+  "backend_issues": {
+    "critical": [],
+    "minor": []
+  },
+  "frontend_issues": {
+    "ui_bugs": [],
+    "integration_issues": [],
+    "design_issues": []
+  },
+  "test_report_links": [
+    "/app/backend/tests/test_summary_export.py",
+    "/app/test_reports/pytest/summary_export_results.xml"
+  ],
+  "action_items": [],
+  "critical_code_review_comments": [
+    "_count_workdays() correctly caps end at today (Asia/Jakarta TZ) so future dates do not inflate workdays. Verified via test_workdays_capped_by_today.",
+    "_build_summary() computes absent = max(0, workdays - attended) which guards against negative absences if a user has more attended-days than workdays in range. Good defensive math.",
+    "Both /attendance/summary and /attendance/summary/export are protected by require_roles(MONITOR_ROLES) (owner/direksi/manager/hrd). Verified 401 without bearer token.",
+    "Export endpoint sets correct Content-Type for both PDF (application/pdf) and XLSX (application/vnd.openxmlformats-officedocument.spreadsheetml.sheet) and a sensible Content-Disposition attachment filename. PDF starts with %PDF-, XLSX is a valid zip containing xl/ entries (parsed with zipfile).",
+    "Frontend monitoring.js uses getToken() + fetch with explicit Bearer header to download the blob (XHR cannot rely on cookies for cross-origin downloads), then creates an object URL + anchor click for save. Robust.",
+    "monitoring.js syncControls() disables start/end inputs for preset modes (minggu/bulan/tahun) and re-enables them for 'rentang' — verified disabled=false in rentang. Good UX.",
+    "Search input is debounced via simple oninput handler. In rekap modes it triggers a backend re-query (correct, since pagination of users may be large); in Harian it filters client-side from the already-loaded /attendance?date= result. Sensible split.",
+    "Minor (non-blocking): in monitoring.js the range-wrap class string is 'hidden flex items-end gap-2' — relying on Tailwind's hidden utility taking precedence over flex via specificity. classList.toggle('hidden', ...) is used to switch — works fine but slightly fragile if Tailwind ordering changes. Optional: use inline style.display.",
+    "Minor: _pdf_bytes() uses _latin() to fall back encoding non-latin chars with 'replace' — fine for default Helvetica font (no embedded UTF-8 font). If future names contain non-latin chars they will render as '?' but won't crash. Acceptable for v1.",
+    "Minor: workdays uses Asia/Jakarta TZ via TZ const for 'today' but parses start/end as naive dates — consistent because the API consumer (frontend) also uses Asia/Jakarta-derived yyyy-mm-dd."
+  ],
+  "updated_files": [
+    "/app/backend/tests/test_summary_export.py"
+  ],
+  "success_rate": {
+    "backend": "100% (11/11 pytest pass in test_summary_export.py)",
+    "frontend": "100% (login + monitoring + all 5 modes + search + PDF/Excel network response + zero console errors)"
+  },
+  "test_credentials": "Owner: owner@company.com / password123 (from /app/memory/test_credentials.md)",
+  "seed_data_creation": "None. Tests rely only on the seeded Owner account (Budi Santoso) since SEED_DEMO=false. Rekap correctly shows absent==workdays for owner because no attendance records exist.",
+  "retest_needed": false,
+  "main_agent_can_self_test": true,
+  "context_for_next_testing_agent": "Period rekap + PDF/Excel export feature is fully covered by /app/backend/tests/test_summary_export.py (11 tests). For frontend testing of Monitoring: login first via input[type=email] / input[type=password] / button:has-text('Masuk'), then wait for [data-testid=nav-monitoring] before clicking it; the page exposes data-testid monitoring-page, monitoring-mode (select), monitoring-date, monitoring-start, monitoring-end, monitoring-search, monitoring-row (Harian), rekap-row (Bulan/Minggu/Tahun/Rentang), download-pdf-btn, download-excel-btn. Network responses can be captured via page.on('response') for /api/attendance/summary/export — both formats return 200 with correct Content-Type and the frontend triggers a blob download (real file-save dialog cannot be asserted in headless). The pre-existing test_absensipro.py module-scoped 'tokens' fixture still tries to log in direksi/manager/staff which do not exist under SEED_DEMO=false — those tests will skip/error, that is environmental and unrelated to this feature.",
+  "rca of the issue": "No defects found. Feature behaves per spec on backend (payload shape, workdays math with today-cap, q/user_id filters, auth guard, PDF %PDF- signature + XLSX zip signature, correct Content-Type headers) and frontend (mode select toggles single-date vs range-date vs preset, rekap table + rekap summary cards swap in for non-Harian modes, search re-queries backend in rekap mode and filters client-side in Harian, PDF/Excel buttons trigger 200 OK fetches with correct content-types, success toast shown)."
+}
