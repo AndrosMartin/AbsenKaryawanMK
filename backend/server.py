@@ -19,6 +19,11 @@ import uuid
 import bcrypt
 import jwt
 import secrets
+import json
+import asyncio
+from pywebpush import webpush, WebPushException
+from apscheduler.schedulers.asyncio import AsyncIOScheduler
+from apscheduler.triggers.cron import CronTrigger
 
 # ----------------------------------------------------------------------------
 # Setup
@@ -33,6 +38,11 @@ TZ = ZoneInfo("Asia/Jakarta")
 WORK_START = os.environ.get("WORK_START", "09:00")
 FACE_MATCH_THRESHOLD = 0.55
 SEED_DEMO = os.environ.get("SEED_DEMO", "true").strip().lower() == "true"
+VAPID_PUBLIC_KEY = os.environ.get("VAPID_PUBLIC_KEY", "")
+VAPID_PRIVATE_KEY = os.environ.get("VAPID_PRIVATE_KEY", "")
+VAPID_SUBJECT = os.environ.get("VAPID_SUBJECT", "mailto:admin@example.com")
+REMINDER_TIME = os.environ.get("REMINDER_TIME", "08:00")
+scheduler = AsyncIOScheduler(timezone=TZ)
 
 MONITOR_ROLES = {"owner", "direksi", "manager", "hrd"}
 MANAGE_ROLES = {"owner", "direksi"}        # dapat menerapkan perubahan langsung
@@ -149,6 +159,58 @@ def compute_status(check_in_dt: datetime) -> str:
 
 
 # ----------------------------------------------------------------------------
+# Web Push (VAPID)
+# ----------------------------------------------------------------------------
+def _send_one_push(sub: dict, payload: str) -> None:
+    webpush(subscription_info=sub, data=payload,
+            vapid_private_key=VAPID_PRIVATE_KEY,
+            vapid_claims={"sub": VAPID_SUBJECT})
+
+
+async def send_push_to_users(user_ids, title: str, body: str,
+                             url: str = "/", tag: str = "absensipro") -> None:
+    if not VAPID_PRIVATE_KEY or not user_ids:
+        return
+    uids = list({str(u) for u in user_ids})
+    subs = await db.push_subscriptions.find({"user_id": {"$in": uids}}).to_list(2000)
+    if not subs:
+        return
+    payload = json.dumps({"title": title, "body": body, "url": url, "tag": tag})
+    loop = asyncio.get_running_loop()
+    for s in subs:
+        try:
+            await loop.run_in_executor(None, _send_one_push, s["subscription"], payload)
+        except WebPushException as e:
+            status = getattr(getattr(e, "response", None), "status_code", None)
+            if status in (404, 410):
+                await db.push_subscriptions.delete_one({"_id": s["_id"]})
+            else:
+                logger.warning(f"web push failed: {e}")
+        except Exception as e:
+            logger.warning(f"web push error: {e}")
+
+
+async def _approver_ids() -> list:
+    docs = await db.users.find({"role": {"$in": list(APPROVER_ROLES)}}, {"_id": 1}).to_list(200)
+    return [str(d["_id"]) for d in docs]
+
+
+async def _send_attendance_reminders() -> None:
+    """Pengingat harian: kirim ke karyawan yang belum check-in hari ini."""
+    date = today_str()
+    users = await db.users.find({}, {"_id": 1, "name": 1}).to_list(2000)
+    for u in users:
+        rec = await db.attendance.find_one(
+            {"user_id": str(u["_id"]), "date": date, "check_in": {"$ne": None}})
+        if rec:
+            continue
+        await send_push_to_users(
+            [str(u["_id"])], "Pengingat Absensi",
+            "Jangan lupa check-in hari ini. Selamat bekerja!",
+            url="/#checkin", tag="reminder")
+
+
+# ----------------------------------------------------------------------------
 # Models
 # ----------------------------------------------------------------------------
 class RegisterBody(BaseModel):
@@ -211,6 +273,14 @@ class CheckOutBody(BaseModel):
 
 class RejectBody(BaseModel):
     reason: Optional[str] = None
+
+
+class PushSubscribeBody(BaseModel):
+    subscription: dict
+
+
+class PushUnsubscribeBody(BaseModel):
+    endpoint: Optional[str] = None
 
 
 # ----------------------------------------------------------------------------
@@ -380,6 +450,14 @@ async def check_in(body: CheckInBody, user: dict = Depends(get_current_user)):
         "lat": body.lat, "lng": body.lng,
     }
     await db.attendance.insert_one(doc)
+    if status == "late":
+        t = check_in_dt.astimezone(TZ).strftime("%H:%M")
+        await send_push_to_users([str(user["_id"])], "Absensi Terlambat",
+                                 f"Anda tercatat TELAT pada {t} WIB.",
+                                 url="/#history", tag="late")
+        await send_push_to_users(await _approver_ids(), "Karyawan Terlambat",
+                                 f"{user.get('name')} check-in telat ({t} WIB).",
+                                 url="/#monitoring", tag="late")
     doc["_id"] = "tmp"
     return att_public(doc, user)
 
@@ -563,6 +641,8 @@ async def _create_request(action: str, requester: dict, summary: str,
     }
     res = await db.employee_requests.insert_one(doc)
     doc["_id"] = res.inserted_id
+    await send_push_to_users(await _approver_ids(), "Permintaan Baru", summary,
+                             url="/#approvals", tag="request")
     out = req_public(doc)
     out["pending"] = True
     return out
@@ -669,6 +749,8 @@ async def approve_request(req_id: str, user: dict = Depends(require_roles(APPROV
     await db.employee_requests.update_one({"_id": req["_id"]}, {"$set": {
         "status": "approved", "reviewed_by": str(user["_id"]),
         "reviewed_by_name": user.get("name"), "reviewed_at": now_iso()}})
+    await send_push_to_users([req["requested_by"]], "Permintaan Disetujui",
+                             req.get("summary"), url="/#approvals", tag="request")
     return {"ok": True, "result": result}
 
 
@@ -683,6 +765,9 @@ async def reject_request(req_id: str, body: RejectBody, user: dict = Depends(req
         "status": "rejected", "reviewed_by": str(user["_id"]),
         "reviewed_by_name": user.get("name"), "reviewed_at": now_iso(),
         "reject_reason": body.reason or "Ditolak"}})
+    await send_push_to_users([req["requested_by"]], "Permintaan Ditolak",
+                             f"{req.get('summary')} — {body.reason or 'Ditolak'}",
+                             url="/#approvals", tag="request")
     return {"ok": True}
 
 
@@ -717,6 +802,43 @@ async def notifications(user: dict = Depends(get_current_user)):
                 "created_at": r.get("reviewed_at"),
             })
     return {"items": items, "count": len(items)}
+
+
+# ----------------------------------------------------------------------------
+# Web Push subscriptions
+# ----------------------------------------------------------------------------
+@api_router.get("/push/vapid-public-key")
+async def vapid_public_key():
+    return {"key": VAPID_PUBLIC_KEY, "configured": bool(VAPID_PUBLIC_KEY and VAPID_PRIVATE_KEY)}
+
+
+@api_router.post("/push/subscribe")
+async def push_subscribe(body: PushSubscribeBody, user: dict = Depends(get_current_user)):
+    endpoint = body.subscription.get("endpoint")
+    if not endpoint:
+        raise HTTPException(status_code=400, detail="Subscription tidak valid")
+    await db.push_subscriptions.update_one(
+        {"endpoint": endpoint},
+        {"$set": {"user_id": str(user["_id"]), "subscription": body.subscription,
+                  "endpoint": endpoint, "updated_at": now_iso()},
+         "$setOnInsert": {"created_at": now_iso()}},
+        upsert=True)
+    return {"ok": True}
+
+
+@api_router.post("/push/unsubscribe")
+async def push_unsubscribe(body: PushUnsubscribeBody, user: dict = Depends(get_current_user)):
+    if body.endpoint:
+        await db.push_subscriptions.delete_one(
+            {"endpoint": body.endpoint, "user_id": str(user["_id"])})
+    return {"ok": True}
+
+
+@api_router.get("/push/status")
+async def push_status(user: dict = Depends(get_current_user)):
+    n = await db.push_subscriptions.count_documents({"user_id": str(user["_id"])})
+    return {"subscribed": n > 0, "count": n,
+            "configured": bool(VAPID_PUBLIC_KEY and VAPID_PRIVATE_KEY)}
 
 
 # ----------------------------------------------------------------------------
@@ -783,6 +905,8 @@ All demo accounts use password: **password123**
 async def _ensure_indexes():
     await db.users.create_index("email", unique=True)
     await db.attendance.create_index([("user_id", 1), ("date", 1)])
+    await db.push_subscriptions.create_index("endpoint", unique=True)
+    await db.push_subscriptions.create_index("user_id")
 
 
 async def _seed_users(admin_email: str, admin_password: str, demo: bool = True):
@@ -864,8 +988,23 @@ async def seed():
 @app.on_event("startup")
 async def on_startup():
     await seed()
+    try:
+        hh, mm = map(int, REMINDER_TIME.split(":"))
+        scheduler.add_job(_send_attendance_reminders,
+                          CronTrigger(hour=hh, minute=mm),
+                          id="attendance_reminder", replace_existing=True)
+        if not scheduler.running:
+            scheduler.start()
+        logger.info(f"Scheduler started; daily reminder at {REMINDER_TIME} {TZ}.")
+    except Exception as e:
+        logger.warning(f"scheduler init failed: {e}")
 
 
 @app.on_event("shutdown")
 async def shutdown_db_client():
+    try:
+        if scheduler.running:
+            scheduler.shutdown(wait=False)
+    except Exception:
+        pass
     client.close()

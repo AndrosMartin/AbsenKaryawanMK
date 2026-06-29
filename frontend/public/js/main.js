@@ -1,5 +1,6 @@
 import { api, getToken, setToken, clearToken } from "/js/api.js";
 import * as ui from "/js/ui.js";
+import { ensurePushSubscribed } from "/js/push.js";
 
 const NAV = [
   { id: "dashboard", label: "Dashboard", icon: "ph-chart-line-up", roles: ui.MONITOR_ROLES },
@@ -258,6 +259,7 @@ async function renderLogin() {
 
 function bootApp() {
   renderShell();
+  ensurePushSubscribed();
   const route = (location.hash || "").replace("#", "") || allowedNav()[0].id;
   navigate(route);
   window.onhashchange = () => {
