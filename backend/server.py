@@ -230,6 +230,11 @@ class LoginBody(BaseModel):
     password: str
 
 
+class ChangePasswordBody(BaseModel):
+    current_password: str
+    new_password: str
+
+
 class EmployeeBody(BaseModel):
     name: str
     email: EmailStr
@@ -323,6 +328,19 @@ async def login(body: LoginBody):
 @api_router.get("/auth/me")
 async def me(user: dict = Depends(get_current_user)):
     return public_user(user)
+
+
+@api_router.post("/auth/change-password")
+async def change_password(body: ChangePasswordBody, user: dict = Depends(get_current_user)):
+    if not verify_password(body.current_password, user["password_hash"]):
+        raise HTTPException(status_code=400, detail="Password lama salah")
+    if len(body.new_password) < 6:
+        raise HTTPException(status_code=400, detail="Password baru minimal 6 karakter")
+    if body.new_password == body.current_password:
+        raise HTTPException(status_code=400, detail="Password baru harus berbeda dari password lama")
+    await db.users.update_one({"_id": user["_id"]},
+                              {"$set": {"password_hash": hash_password(body.new_password)}})
+    return {"ok": True, "message": "Password berhasil diubah"}
 
 
 # ----------------------------------------------------------------------------
@@ -518,6 +536,22 @@ async def all_attendance(date: Optional[str] = Query(None),
 # ----------------------------------------------------------------------------
 # Attendance summary (rekap) + export PDF/Excel
 # ----------------------------------------------------------------------------
+_STATUS_LABEL = {"present": "Tepat Waktu", "tolerance": "Toleransi", "late": "Terlambat",
+                 "absent": "Tidak Hadir"}
+
+
+def _fmt_local_time(iso) -> str:
+    if not iso:
+        return "-"
+    try:
+        dt = datetime.fromisoformat(iso)
+        if dt.tzinfo is None:
+            dt = dt.replace(tzinfo=timezone.utc)
+        return dt.astimezone(TZ).strftime("%H:%M")
+    except Exception:
+        return "-"
+
+
 def _count_workdays(start: str, end: str) -> int:
     """Jumlah hari kerja (Senin–Jumat) dalam rentang, dibatasi s/d hari ini."""
     s = datetime.strptime(start, "%Y-%m-%d").date()
@@ -534,7 +568,8 @@ def _count_workdays(start: str, end: str) -> int:
 
 
 async def _build_summary(start: str, end: str,
-                         user_id: Optional[str] = None, q: Optional[str] = None) -> dict:
+                         user_id: Optional[str] = None, q: Optional[str] = None,
+                         include_detail: bool = False) -> dict:
     users = await db.users.find({}, {"password_hash": 0}).sort("name", 1).to_list(1000)
     if user_id:
         users = [u for u in users if str(u["_id"]) == user_id]
@@ -573,7 +608,27 @@ async def _build_summary(start: str, end: str,
         tot["late"] += a["late"]
         tot["attended"] += attended
         tot["absent"] += absent
-    return {"start": start, "end": end, "workdays": workdays, "rows": rows, "totals": tot}
+    out = {"start": start, "end": end, "workdays": workdays, "rows": rows, "totals": tot}
+    if include_detail:
+        user_by_id = {str(u["_id"]): u for u in users}
+        detail = []
+        for r in recs:
+            if not r.get("check_in"):
+                continue
+            u = user_by_id.get(r["user_id"]) or {}
+            detail.append({
+                "date": r.get("date"),
+                "employee_id": u.get("employee_id"),
+                "name": u.get("name"),
+                "department": u.get("department"),
+                "check_in": _fmt_local_time(r.get("check_in")),
+                "check_out": _fmt_local_time(r.get("check_out")),
+                "status": r.get("status"),
+                "status_label": _STATUS_LABEL.get(r.get("status"), r.get("status") or "-"),
+            })
+        detail.sort(key=lambda x: (x["date"] or "", x["name"] or ""))
+        out["detail"] = detail
+    return out
 
 
 @api_router.get("/attendance/summary")
@@ -618,6 +673,26 @@ def _xlsx_bytes(data: dict) -> bytes:
     widths = [14, 26, 18, 20, 12, 11, 12, 12, 11, 14]
     for i, w in enumerate(widths, 1):
         ws.column_dimensions[chr(64 + i)].width = w
+
+    # Sheet 2: detail harian dengan jam masuk & pulang
+    detail = data.get("detail") or []
+    ws2 = wb.create_sheet("Detail Harian")
+    ws2.append(["Detail Harian — Jam Masuk & Pulang"])
+    ws2.append([f"Periode: {data['start']} s/d {data['end']}"])
+    ws2.append([])
+    dheaders = ["Tanggal", "ID Karyawan", "Nama", "Departemen", "Jam Masuk", "Jam Pulang", "Status"]
+    ws2.append(dheaders)
+    dhead_row = ws2.max_row
+    for c in ws2[dhead_row]:
+        c.font = Font(bold=True, color="E0B100")
+        c.fill = fill
+        c.alignment = Alignment(horizontal="center")
+    for d in detail:
+        ws2.append([d["date"], d["employee_id"], d["name"], d["department"],
+                    d["check_in"], d["check_out"], d["status_label"]])
+    for i, w in enumerate([14, 14, 26, 18, 12, 12, 16], 1):
+        ws2.column_dimensions[chr(64 + i)].width = w
+
     buf = io.BytesIO()
     wb.save(buf)
     return buf.getvalue()
@@ -657,6 +732,34 @@ def _pdf_bytes(data: dict) -> bytes:
         pdf.cell(w, 7, str(v), border=1, align="C")
     pdf.cell(20, 7, "", border=1)
     pdf.cell(16, 7, "", border=1)
+
+    # Halaman detail harian (jam masuk & pulang)
+    detail = data.get("detail") or []
+    if detail:
+        pdf.add_page()
+        pdf.set_font("Helvetica", "B", 13)
+        pdf.cell(0, 8, "Detail Harian - Jam Masuk & Pulang", new_x="LMARGIN", new_y="NEXT")
+        pdf.set_font("Helvetica", "", 9)
+        pdf.cell(0, 6, f"Periode: {data['start']} s/d {data['end']}", new_x="LMARGIN", new_y="NEXT")
+        pdf.ln(2)
+        dcols = [("Tanggal", 28), ("ID", 24), ("Nama", 58), ("Departemen", 40),
+                 ("Masuk", 22), ("Pulang", 22), ("Status", 34)]
+        pdf.set_font("Helvetica", "B", 8)
+        pdf.set_fill_color(11, 11, 12)
+        pdf.set_text_color(224, 177, 0)
+        for h, w in dcols:
+            pdf.cell(w, 7, h, border=1, fill=True, align="C")
+        pdf.ln(7)
+        pdf.set_text_color(0, 0, 0)
+        pdf.set_font("Helvetica", "", 8)
+        for d in detail:
+            vals = [str(d["date"]), _latin(d["employee_id"]), _latin(d["name"])[:36],
+                    _latin(d.get("department") or "-")[:24], d["check_in"], d["check_out"],
+                    _latin(d["status_label"])]
+            for (h, w), v in zip(dcols, vals):
+                pdf.cell(w, 6, v, border=1, align="L" if h in ("Nama", "Departemen", "ID") else "C")
+            pdf.ln(6)
+
     out = pdf.output()
     return bytes(out)
 
@@ -665,7 +768,7 @@ def _pdf_bytes(data: dict) -> bytes:
 async def export_summary(format: str = Query("xlsx"), start: str = Query(...), end: str = Query(...),
                          user_id: Optional[str] = Query(None), q: Optional[str] = Query(None),
                          user: dict = Depends(require_roles(MONITOR_ROLES))):
-    data = await _build_summary(start, end, user_id, q)
+    data = await _build_summary(start, end, user_id, q, include_detail=True)
     fname = f"rekap-absensi-{start}_sd_{end}"
     if format == "pdf":
         content = _pdf_bytes(data)

@@ -46,6 +46,36 @@ export async function render(root, ctx) {
       </div>
     </div>
 
+    <div class="bg-white border border-slate-200 rounded-xl overflow-hidden" data-testid="password-card">
+      <div class="p-6">
+        <div class="flex items-start gap-4">
+          <div class="h-11 w-11 rounded-xl bg-slate-900/5 text-slate-700 flex items-center justify-center shrink-0"><i class="ph-fill ph-lock-key text-xl"></i></div>
+          <div class="flex-1">
+            <h3 class="font-heading font-semibold text-slate-900">Ganti Password</h3>
+            <p class="text-sm text-slate-500 mt-0.5">Perbarui kata sandi akun Anda secara berkala demi keamanan.</p>
+          </div>
+        </div>
+        <form id="pwd-form" class="mt-4 space-y-3 max-w-sm">
+          <div>
+            <label class="block text-xs text-slate-500 mb-1">Password Lama</label>
+            <input type="password" id="pwd-current" data-testid="pwd-current" required autocomplete="current-password"
+              class="w-full px-3 py-2 bg-white border border-slate-200 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-slate-900" />
+          </div>
+          <div>
+            <label class="block text-xs text-slate-500 mb-1">Password Baru</label>
+            <input type="password" id="pwd-new" data-testid="pwd-new" required minlength="6" autocomplete="new-password"
+              class="w-full px-3 py-2 bg-white border border-slate-200 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-slate-900" />
+          </div>
+          <div>
+            <label class="block text-xs text-slate-500 mb-1">Konfirmasi Password Baru</label>
+            <input type="password" id="pwd-confirm" data-testid="pwd-confirm" required minlength="6" autocomplete="new-password"
+              class="w-full px-3 py-2 bg-white border border-slate-200 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-slate-900" />
+          </div>
+          <button type="submit" id="pwd-submit" data-testid="pwd-submit-btn" class="px-4 py-2 rounded-lg text-sm font-medium bg-ink text-gold hover:bg-ink/90 transition-colors">Simpan Password Baru</button>
+        </form>
+      </div>
+    </div>
+
     <div class="flex gap-3">
       <button id="go-face" data-testid="profile-face-btn" class="flex-1 bg-white border border-slate-200 hover:border-slate-900 text-slate-900 py-2.5 rounded-lg text-sm font-medium flex items-center justify-center gap-2"><i class="ph ph-user-focus"></i> ${u.face_enrolled ? "Perbarui Wajah" : "Daftarkan Wajah"}</button>
       <button id="logout2" data-testid="profile-logout-btn" class="flex-1 bg-rose-600 text-white py-2.5 rounded-lg text-sm font-medium hover:bg-rose-700 flex items-center justify-center gap-2"><i class="ph ph-sign-out"></i> Keluar</button>
@@ -54,6 +84,29 @@ export async function render(root, ctx) {
 
   root.querySelector("#go-face").onclick = () => ctx.navigate("face");
   root.querySelector("#logout2").onclick = () => ctx.logout();
+
+  // --- Change password ---
+  const pwdForm = root.querySelector("#pwd-form");
+  pwdForm.onsubmit = async (e) => {
+    e.preventDefault();
+    const cur = root.querySelector("#pwd-current").value;
+    const nw = root.querySelector("#pwd-new").value;
+    const cf = root.querySelector("#pwd-confirm").value;
+    if (nw.length < 6) { ui.toast("Password baru minimal 6 karakter", "error"); return; }
+    if (nw !== cf) { ui.toast("Konfirmasi password tidak cocok", "error"); return; }
+    const btn = root.querySelector("#pwd-submit");
+    const orig = btn.textContent;
+    btn.textContent = "Menyimpan…"; btn.disabled = true;
+    try {
+      await ctx.api.post("/auth/change-password", { current_password: cur, new_password: nw });
+      ui.toast("Password berhasil diubah", "success");
+      pwdForm.reset();
+    } catch (err) {
+      ui.toast(err.message || "Gagal mengubah password", "error");
+    } finally {
+      btn.textContent = orig; btn.disabled = false;
+    }
+  };
 
   // --- Push notification toggle ---
   const toggle = root.querySelector("#push-toggle");
