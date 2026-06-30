@@ -54,7 +54,7 @@ async function navigate(route) {
   const content = document.getElementById("app-content");
   content.innerHTML = `<div class="flex items-center justify-center py-32 text-slate-400"><i class="ph ph-circle-notch spin text-3xl"></i></div>`;
   try {
-    const mod = await import(`/modules/${route}.js?v=13`);
+    const mod = await import(`/modules/${route}.js?v=14`);
     content.innerHTML = "";
     await mod.render(content, ctx);
   } catch (e) {

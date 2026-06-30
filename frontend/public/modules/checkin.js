@@ -70,8 +70,10 @@ export async function render(root, ctx) {
             <div class="flex items-center">${ui.statusPill(today.status)}</div>
           </div>
           ${!out ? `<button id="checkout-btn" data-testid="checkout-btn" class="bg-gold text-ink px-4 py-2.5 rounded-lg text-sm font-semibold hover:bg-gold-500">Check-out Sekarang</button>` : ""}
-        </div>`;
+        </div>
+        ${lateBanner()}`;
       if (!out) root.querySelector("#checkout-btn").onclick = doCheckout;
+      bindLateForm();
     } else {
       todayCard.innerHTML = `
         <div class="bg-ink rounded-xl p-5 flex items-center gap-4 text-white">
@@ -79,6 +81,54 @@ export async function render(root, ctx) {
           <div><p class="font-heading font-semibold">Belum check-in hari ini</p><p class="text-sm text-slate-400">Selesaikan verifikasi di bawah untuk mencatat kehadiran.</p></div>
         </div>`;
     }
+  }
+
+  function lateBanner() {
+    if (today.status !== "late" && !today.late_compensated) return "";
+    if (today.late_category === "potong_cuti") {
+      return `<div class="mt-3 flex items-start gap-3 bg-rose-50 border border-rose-200 rounded-xl px-4 py-3" data-testid="late-deduct-banner">
+        <i class="ph-fill ph-warning-octagon text-rose-600 text-lg mt-0.5"></i>
+        <p class="text-sm text-rose-800">Anda check-in melewati pukul 12:00. Sesuai kebijakan, <strong>cuti Anda dipotong 0,5 hari</strong>.</p></div>`;
+    }
+    if (today.late_category === "perlu_approval") {
+      if (today.late_review_status === "approved") {
+        return `<div class="mt-3 flex items-start gap-3 bg-emerald-50 border border-emerald-200 rounded-xl px-4 py-3">
+          <i class="ph-fill ph-check-circle text-emerald-600 text-lg mt-0.5"></i>
+          <p class="text-sm text-emerald-800">Keterlambatan Anda telah <strong>disetujui</strong>${today.late_compensated ? " dan dihitung HADIR" : ""}.</p></div>`;
+      }
+      if (today.late_review_status === "rejected") {
+        return `<div class="mt-3 flex items-start gap-3 bg-amber-50 border border-amber-300 rounded-xl px-4 py-3">
+          <i class="ph-fill ph-flag text-amber-600 text-lg mt-0.5"></i>
+          <p class="text-sm text-amber-800">Keterlambatan ditolak — Anda mendapat <strong>Kartu Kuning</strong> (berdampak pada KPI).</p></div>`;
+      }
+      if (today.late_reason) {
+        return `<div class="mt-3 flex items-start gap-3 bg-yellow-50 border border-yellow-200 rounded-xl px-4 py-3">
+          <i class="ph-fill ph-hourglass-medium text-yellow-600 text-lg mt-0.5"></i>
+          <p class="text-sm text-yellow-800">Alasan terkirim, menunggu persetujuan atasan. Jika tidak disetujui, akan menjadi <strong>Kartu Kuning</strong>.</p></div>`;
+      }
+      return `<div class="mt-3 bg-yellow-50 border border-yellow-200 rounded-xl px-4 py-3" data-testid="late-reason-card">
+        <p class="text-sm text-yellow-800 mb-2"><i class="ph-fill ph-warning text-yellow-600"></i> Anda terlambat. Masukkan <strong>alasan keterlambatan</strong> agar dapat ditinjau atasan (HRD/Manager/Direksi).</p>
+        <div class="flex gap-2">
+          <input id="late-reason-input" data-testid="late-reason-input" placeholder="Contoh: kendala transportasi…" class="flex-1 px-3 py-2 border border-yellow-300 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-yellow-500" />
+          <button id="late-reason-submit" data-testid="late-reason-submit" class="px-4 py-2 rounded-lg text-sm font-semibold bg-ink text-gold hover:bg-ink/90">Kirim</button>
+        </div></div>`;
+    }
+    return "";
+  }
+
+  function bindLateForm() {
+    const btn = root.querySelector("#late-reason-submit");
+    if (!btn) return;
+    btn.onclick = async () => {
+      const val = root.querySelector("#late-reason-input").value.trim();
+      if (!val) { ui.toast("Alasan tidak boleh kosong", "error"); return; }
+      try {
+        await ctx.api.post("/late/reason", { reason: val });
+        today.late_reason = val;
+        ui.toast("Alasan keterlambatan terkirim", "success");
+        renderToday();
+      } catch (e) { ui.toast(e.message, "error"); }
+    };
   }
 
   async function loadGps() {

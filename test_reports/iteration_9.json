@@ -1,0 +1,54 @@
+{
+  "summary": "FASE 4 — Late approval flow + Kartu Kuning KPI board. Backend pytest 14/14 PASSING (test_fase4_late_kpi.py) covering: role guards (staff 403 on /api/late/pending, /api/late/{id}/approve, /api/late/{id}/reject, /api/kpi/discipline), HRD approval at 09:30 WIB -> compensated=true & status='present' & yellow_card=false, approval at 10:30 WIB -> compensated=false & status='late' & yellow_card=false, reject -> yellow_card=true & late_review_status='rejected', potong cuti (leave_deductions 0.5) -> /api/leave/balance.deducted=0.5 and used includes 0.5, POST /api/late/reason 404 when no late record today & success path persists late_reason, KPI access matrix: owner/direksi/hrd allowed, manager-without-kpi_access 403 then PUT /api/employees/{id}/kpi-access {kpi_access:true} flips to 200, KPI rows aggregate yellow_cards/late_count/leave_deducted and are sorted desc by (yellow+deduct, late_count). Frontend Playwright verified: owner Dashboard renders all 5 status cards (Total/Tepat Waktu/Toleransi/Terlambat/Tidak Hadir), late-approval-section with late-pending-row + Setujui/Tolak buttons (late-approve-{id}/late-reject-{id}), kpi-section with kpi-row after seeding; Karyawan page shows BOTH reviewer-{id} ('Jadikan Reviewer' <-> 'Reviewer ✓') AND kpi-access-{id} ('Izinkan KPI' <-> 'Akses KPI ✓') toggles for manager rows and persist on click; STAFF check-in page shows late-reason-input + late-reason-submit when today's record is perlu_approval without reason, submit posts /api/late/reason and switches to waiting banner 'Alasan terkirim, menunggu persetujuan atasan. Jika tidak disetujui, akan menjadi Kartu Kuning'. Regression: owner nav (dashboard/absensi/riwayat/cuti/monitoring/karyawan/persetujuan/lokasi/pengaturan/wajah/profil) all load; staff nav (checkin/history/leave/face/profile) correct; settings has leave-quota field; leave-page renders; no non-Tailwind console errors. DB cleanup verified: only owner remains, attendance/leave_deductions/leave_requests all 0.",
+  "backend_issues": {
+    "critical": [],
+    "minor": [
+      {"endpoint": "GET /api/late/pending", "issue": "items[].user_id is the raw Mongo ObjectId string (str(_id)); frontend already handles it but the API contract is undocumented. Acceptable but worth noting."},
+      {"endpoint": "GET /api/kpi/discipline", "issue": "Always returns can_access:true (only success path is reached). If frontend ever needs to render a 'soft no access' state without 403, the endpoint would need to be redesigned. Currently 403 is the no-access signal — fine for this build."}
+    ]
+  },
+  "frontend_issues": {
+    "ui_bugs": [],
+    "integration_issues": [],
+    "design_issues": []
+  },
+  "test_report_links": [
+    "/app/backend/tests/test_fase4_late_kpi.py",
+    "/app/test_reports/pytest/fase4_results.xml"
+  ],
+  "action_items": [],
+  "critical_code_review_comments": [
+    "server.py is now 1799 lines (was 1622 in iteration_8). REPEAT recommendation: split into modules (auth/employees/attendance/leave/late_kpi/exports/settings/push) before adding FASE 5. Single-file growth is becoming a maintainability risk.",
+    "/api/late/pending lists ALL pending late records org-wide for any LATE_APPROVER_ROLES user including managers. There is no department scoping for managers — a manager can approve/reject any staff's late record regardless of dept. Confirm this matches business spec (otherwise add dept filter for role=='manager').",
+    "/api/late/{id}/approve / reject use require_roles(LATE_APPROVER_ROLES) which includes 'manager' unconditionally — but KPI access for managers is gated by kpi_access flag. Late approval is NOT gated by any flag; ensure intentional.",
+    "approve_late uses string compare on '%H:%M' (e.g. t<='10:00') — works because zero-padded HH:MM is lexicographically equivalent, but a comment or helper would be clearer.",
+    "leave/balance returns 'remaining = quota - used' where used = used_leave + deducted; the response also exposes 'deducted' separately. Good. However when deducted pushes used > quota, remaining is clamped to 0 — silent overflow; consider exposing a negative 'overdraft' or warning so HR can see it.",
+    "DELETE /api/employees/{id} still doesn't cascade delete leave_requests / leave_deductions / attendance(yellow_card history). Carrying over from iteration_8.",
+    "frontend dashboard.js late-approval-section uses MONITOR_ROLES gate but the backend uses LATE_APPROVER_ROLES (includes manager). They DO match for current roles but if MONITOR_ROLES diverges, managers could lose UI access while keeping API access. Recommend defining a single shared constant exported from one place."
+  ],
+  "updated_files": [
+    "/app/backend/tests/test_fase4_late_kpi.py"
+  ],
+  "success_rate": {"backend": "100% (14/14)", "frontend": "100%"},
+  "test_credentials": "Owner: owner@company.com / password123. All transient TEST_ users (staff_f4, hrd_f4, mgr_f4, staff2_f4, uimgr, uifrontstaff) created during testing have been DELETED. test_credentials.md remains as the documented baseline.",
+  "seed_data_creation": "Module-scoped pytest fixture created 4 users (TEST_staff_f4, TEST_hrd_f4, TEST_mgr_f4, TEST_staff2_f4) via /api/employees, seeded multiple attendance docs directly in Mongo (perlu_approval at 09:30/10:30/11:00 WIB, potong_cuti at 12:30 WIB) + 1 leave_deductions doc (0.5 day). For UI run, additionally created TEST_uimgr (manager) directly and TEST UI Staff via API + seeded one perlu_approval @09:45 WIB. ALL DATA REMOVED in fixture teardown + manual sweep — final state: users=1 (owner only), attendance=0, leave_deductions=0, leave_requests=0.",
+  "retest_needed": false,
+  "main_agent_can_self_test": true,
+  "context_for_next_testing_agent": "FASE 4 fully verified. Test file at /app/backend/tests/test_fase4_late_kpi.py runs in ~6s and is self-cleaning. Key API contracts confirmed: GET /api/late/pending returns {items[{id,user_id,name,department,employee_id,date,check_in_time,reason}], count} for LATE_APPROVER_ROLES (owner/direksi/hrd/manager); POST /api/late/{id}/approve body LateDecisionBody (note optional) returns {ok, compensated} with compensated=(WIB time <=10:00) — when compensated, status flips to 'present' and yellow_card=false; POST /api/late/{id}/reject returns {ok}, sets yellow_card=true & late_review_status='rejected' & stores late_reject_note; POST /api/late/reason {reason} 404s if no late record TODAY for the calling user, else writes late_reason; GET /api/leave/balance returns {year, quota, used, deducted, pending, remaining} with used=leave_used+deducted; GET /api/kpi/discipline?month=YYYY-MM returns {month, rows:[{user_id, name, department, employee_id, yellow_cards, late_count, leave_deducted}], can_access:true}, 403 for staff and manager-without-kpi_access; PUT /api/employees/{id}/kpi-access {kpi_access:bool} requires HR_ROLES (owner/direksi/hrd). Frontend testids verified: late-approval-section, late-pending-row, late-approve-{id}, late-reject-{id}, kpi-section, kpi-row, reviewer-{id}, kpi-access-{id}, late-reason-input, late-reason-submit, late-reason-card, late-deduct-banner (not tested — needs potong_cuti UI seed). Staff sidebar nav: [nav-checkin, nav-history, nav-leave, nav-face, nav-profile] (no dashboard).",
+  "verified_features": [
+    "Staff role gets 403 on /api/late/pending, /api/late/{id}/approve, /api/late/{id}/reject, /api/kpi/discipline",
+    "HRD can GET /api/late/pending — items envelope {items, count} with id/user_id/name/dept/employee_id/date/check_in_time/reason",
+    "Approve at 09:30 WIB: response {compensated:true}, attendance status -> 'present', yellow_card=false, late_review_status='approved'",
+    "Approve at 10:30 WIB: response {compensated:false}, attendance status stays 'late', yellow_card=false, late_review_status='approved'",
+    "Reject: yellow_card=true, late_review_status='rejected', late_reject_note persisted",
+    "Potong cuti (12:30 WIB simulated): GET /api/leave/balance.deducted=0.5, used includes the 0.5",
+    "POST /api/late/reason: 404 when no late record today; success writes late_reason and triggers push to approvers",
+    "KPI access: owner & hrd 200; staff & manager-without-kpi_access 403; PUT /employees/{id}/kpi-access flips manager to 200",
+    "KPI rows aggregate yellow_cards + late_count + leave_deducted per user_id; sorted desc by (yellow+deduct, late_count)",
+    "Frontend Dashboard owner: late-approval-section + kpi-section render with seeded data; Setujui/Tolak buttons have testids late-approve-{id}/late-reject-{id}",
+    "Frontend Karyawan owner: manager rows show BOTH reviewer-{id} ('Jadikan Reviewer'<->'Reviewer ✓') AND kpi-access-{id} ('Izinkan KPI'<->'Akses KPI ✓') toggles; both persist correctly",
+    "Frontend Absensi staff: late-reason-input + late-reason-submit visible when perlu_approval w/o reason; submit -> 'Alasan terkirim, menunggu persetujuan atasan ... Kartu Kuning' banner + toast",
+    "Regression FASE 1/2/3: owner full nav, staff nav, leave-page, settings leave-quota, all intact; no non-Tailwind console errors"
+  ],
+  "rca of the issue": "N/A — all backend + frontend tests passed in this iteration. One transient issue during testing: direct bcrypt-seeded user could not login (the backend's own bcrypt round differs from the ad-hoc seed). Resolved by creating users via POST /api/employees instead; this is a TEST harness lesson, not a product bug."
+}

@@ -113,5 +113,76 @@ export async function render(root, ctx) {
       <p class="text-xs text-slate-400 mb-2">Check-in terakhir dari karyawan</p>
       <div>${recent}</div>
     </div>
+
+    ${ui.MONITOR_ROLES.includes(ctx.user.role) ? `<div id="late-approval-section"></div>` : ""}
+    ${(["owner", "direksi", "hrd"].includes(ctx.user.role) || (ctx.user.role === "manager" && ctx.user.kpi_access)) ? `<div id="kpi-section"></div>` : ""}
   </div>`;
+
+  const role = ctx.user.role;
+  const canLateApprove = ui.MONITOR_ROLES.includes(role);
+  const canKpi = ["owner", "direksi", "hrd"].includes(role) || (role === "manager" && ctx.user.kpi_access);
+
+  async function loadLateApprovals() {
+    const el = root.querySelector("#late-approval-section");
+    if (!el) return;
+    let data;
+    try { data = await ctx.api.get("/late/pending"); } catch (e) { return; }
+    if (!data.items.length) { el.innerHTML = ""; return; }
+    el.innerHTML = `<div class="bg-white border border-slate-200 rounded-xl p-6" data-testid="late-approval-section">
+      <h3 class="font-heading font-semibold text-lg text-slate-900 mb-1">Persetujuan Keterlambatan <span class="ml-1 text-xs bg-rose-100 text-rose-700 px-2 py-0.5 rounded-full">${data.items.length}</span></h3>
+      <p class="text-xs text-slate-400 mb-4">Setujui (check-in ≤ 10:00 → dihitung Hadir) atau tolak (→ Kartu Kuning).</p>
+      <div class="space-y-3">${data.items.map((it) => `
+        <div class="flex items-center justify-between gap-3 border border-slate-100 rounded-lg p-3" data-testid="late-pending-row">
+          <div class="min-w-0">
+            <p class="text-sm font-semibold text-slate-900">${it.name} <span class="text-xs text-slate-400 font-mono">${it.date} · ${it.check_in_time}</span></p>
+            <p class="text-xs text-slate-500">${it.reason ? "Alasan: " + it.reason : "<i>Belum ada alasan</i>"}</p>
+          </div>
+          <div class="flex gap-2 shrink-0">
+            <button data-la-ap="${it.id}" data-testid="late-approve-${it.id}" class="px-3 py-1.5 rounded-lg text-xs font-semibold bg-emerald-600 text-white hover:bg-emerald-700">Setujui</button>
+            <button data-la-rj="${it.id}" data-testid="late-reject-${it.id}" class="px-3 py-1.5 rounded-lg text-xs font-semibold bg-rose-600 text-white hover:bg-rose-700">Tolak</button>
+          </div>
+        </div>`).join("")}</div></div>`;
+    el.querySelectorAll("[data-la-ap]").forEach((b) => b.onclick = () => lateDecide(b.getAttribute("data-la-ap"), "approve"));
+    el.querySelectorAll("[data-la-rj]").forEach((b) => b.onclick = () => lateDecide(b.getAttribute("data-la-rj"), "reject"));
+  }
+
+  async function lateDecide(id, action) {
+    let note = "";
+    if (action === "reject") note = prompt("Catatan penolakan (opsional):") || "";
+    try {
+      const res = await ctx.api.post(`/late/${id}/${action}`, { note });
+      ui.toast(action === "approve" ? (res.compensated ? "Disetujui — dihitung Hadir" : "Disetujui") : "Ditolak — Kartu Kuning", action === "approve" ? "success" : "info");
+      loadLateApprovals();
+      if (canKpi) loadKpi();
+      if (window.__refreshNotifs) window.__refreshNotifs();
+    } catch (e) { ui.toast(e.message, "error"); }
+  }
+
+  async function loadKpi() {
+    const el = root.querySelector("#kpi-section");
+    if (!el) return;
+    let data;
+    try { data = await ctx.api.get("/kpi/discipline"); } catch (e) { return; }
+    const rows = data.rows.filter((r) => r.yellow_cards > 0 || r.leave_deducted > 0 || r.late_count > 0);
+    el.innerHTML = `<div class="bg-white border border-slate-200 rounded-xl p-6" data-testid="kpi-section">
+      <div class="flex items-center justify-between mb-1">
+        <h3 class="font-heading font-semibold text-lg text-slate-900">Papan Kedisiplinan — Kartu Kuning</h3>
+        <span class="text-xs text-slate-400 font-mono">${data.month}</span>
+      </div>
+      <p class="text-xs text-slate-400 mb-4">Ranking pelanggaran keterlambatan bulan berjalan (untuk evaluasi KPI).</p>
+      ${rows.length ? `<div class="w-full overflow-x-auto"><table class="w-full"><thead class="bg-slate-50"><tr>
+        ${["#", "Karyawan", "Departemen", "Kartu Kuning", "Telat", "Potong Cuti"].map((t, i) => `<th class="px-4 py-2 ${i >= 3 ? "text-center" : "text-left"} text-xs font-medium text-slate-500 uppercase tracking-wider">${t}</th>`).join("")}
+      </tr></thead><tbody class="divide-y divide-slate-100">${rows.map((r, i) => `
+        <tr data-testid="kpi-row"><td class="px-4 py-3 text-sm text-slate-400">${i + 1}</td>
+          <td class="px-4 py-3"><div class="flex items-center gap-2"><div class="h-8 w-8 rounded-full bg-slate-100 text-slate-700 flex items-center justify-center text-xs font-semibold">${ui.initials(r.name)}</div><span class="text-sm font-medium text-slate-900">${r.name}</span></div></td>
+          <td class="px-4 py-3 text-sm text-slate-600">${r.department || "—"}</td>
+          <td class="px-4 py-3 text-center"><span class="inline-flex items-center justify-center min-w-[1.75rem] px-2 py-0.5 rounded-full text-xs font-bold ${r.yellow_cards > 0 ? "bg-amber-100 text-amber-700" : "bg-slate-100 text-slate-400"}">${r.yellow_cards}</span></td>
+          <td class="px-4 py-3 text-center text-sm text-slate-600">${r.late_count}</td>
+          <td class="px-4 py-3 text-center text-sm font-medium ${r.leave_deducted > 0 ? "text-rose-600" : "text-slate-400"}">${r.leave_deducted} hari</td>
+        </tr>`).join("")}</tbody></table></div>`
+        : `<p class="text-sm text-slate-400 py-6 text-center">Belum ada pelanggaran bulan ini. 🎉</p>`}</div>`;
+  }
+
+  if (canLateApprove) loadLateApprovals();
+  if (canKpi) loadKpi();
 }

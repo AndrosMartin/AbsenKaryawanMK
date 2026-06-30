@@ -48,7 +48,10 @@ export async function render(root, ctx) {
         <td class="px-5 py-4">${ui.roleBadge(e.role)}</td>
         <td class="px-5 py-4">${e.face_enrolled ? '<span class="inline-flex items-center gap-1 text-emerald-600 text-xs font-medium"><i class="ph-fill ph-check-circle"></i> Terdaftar</span>' : '<span class="text-slate-400 text-xs">Belum</span>'}</td>
         ${canManage ? `<td class="px-5 py-4">${e.role === "manager"
-          ? `<button data-rev="${e.id}" data-on="${e.is_reviewer ? 1 : 0}" data-testid="reviewer-${e.id}" class="px-2.5 py-1 rounded-full text-xs font-medium border transition-colors ${e.is_reviewer ? "bg-indigo-50 text-indigo-700 border-indigo-200 hover:bg-indigo-100" : "bg-slate-50 text-slate-500 border-slate-200 hover:border-slate-400"}">${e.is_reviewer ? "Reviewer ✓" : "Jadikan Reviewer"}</button>`
+          ? `<div class="flex flex-col gap-1.5">
+              <button data-rev="${e.id}" data-on="${e.is_reviewer ? 1 : 0}" data-testid="reviewer-${e.id}" class="px-2.5 py-1 rounded-full text-xs font-medium border transition-colors ${e.is_reviewer ? "bg-indigo-50 text-indigo-700 border-indigo-200 hover:bg-indigo-100" : "bg-slate-50 text-slate-500 border-slate-200 hover:border-slate-400"}">${e.is_reviewer ? "Reviewer ✓" : "Jadikan Reviewer"}</button>
+              <button data-kpi="${e.id}" data-on="${e.kpi_access ? 1 : 0}" data-testid="kpi-access-${e.id}" class="px-2.5 py-1 rounded-full text-xs font-medium border transition-colors ${e.kpi_access ? "bg-emerald-50 text-emerald-700 border-emerald-200 hover:bg-emerald-100" : "bg-slate-50 text-slate-500 border-slate-200 hover:border-slate-400"}">${e.kpi_access ? "Akses KPI ✓" : "Izinkan KPI"}</button>
+            </div>`
           : '<span class="text-slate-300 text-xs">—</span>'}</td>` : ""}
         ${canManage ? `<td class="px-5 py-4 text-right">
           <button data-edit="${e.id}" data-testid="edit-${e.id}" class="text-slate-500 hover:text-slate-900 p-1.5"><i class="ph ph-pencil-simple"></i></button>
@@ -75,6 +78,15 @@ export async function render(root, ctx) {
         try {
           await ctx.api.put(`/employees/${id}/reviewer`, { is_reviewer: !on });
           ui.toast(!on ? "Ditetapkan sebagai Reviewer" : "Status Reviewer dilepas", "success");
+          load();
+        } catch (e) { ui.toast(e.message, "error"); }
+      });
+      tableEl.querySelectorAll("[data-kpi]").forEach((b) => b.onclick = async () => {
+        const id = b.getAttribute("data-kpi");
+        const on = b.getAttribute("data-on") === "1";
+        try {
+          await ctx.api.put(`/employees/${id}/kpi-access`, { kpi_access: !on });
+          ui.toast(!on ? "Akses papan KPI diizinkan" : "Akses papan KPI dicabut", "success");
           load();
         } catch (e) { ui.toast(e.message, "error"); }
       });

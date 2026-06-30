@@ -125,6 +125,7 @@ def public_user(u: dict) -> dict:
         "employee_id": u.get("employee_id"),
         "phone": u.get("phone"),
         "is_reviewer": bool(u.get("is_reviewer")),
+        "kpi_access": bool(u.get("kpi_access")),
         "face_enrolled": bool(u.get("face_descriptor")),
         "created_at": u.get("created_at"),
     }
@@ -297,6 +298,18 @@ class LeaveDecisionBody(BaseModel):
 
 class ReviewerBody(BaseModel):
     is_reviewer: bool
+
+
+class KpiAccessBody(BaseModel):
+    kpi_access: bool
+
+
+class LateReasonBody(BaseModel):
+    reason: str
+
+
+class LateDecisionBody(BaseModel):
+    note: Optional[str] = ""
 
 
 class EmployeeBody(BaseModel):
@@ -497,6 +510,12 @@ def att_public(a: dict, user: Optional[dict] = None) -> dict:
         "office_name": a.get("office_name"),
         "distance_m": a.get("distance_m"),
         "within_geofence": a.get("within_geofence"),
+        "late_category": a.get("late_category"),
+        "late_review_status": a.get("late_review_status"),
+        "late_reason": a.get("late_reason"),
+        "late_compensated": bool(a.get("late_compensated")),
+        "yellow_card": bool(a.get("yellow_card")),
+        "leave_deducted": a.get("leave_deducted", 0),
     }
     if user:
         out.update({"name": user.get("name"), "department": user.get("department"),
@@ -534,15 +553,36 @@ async def check_in(body: CheckInBody, user: dict = Depends(get_current_user)):
         "within_geofence": True,
         "lat": body.lat, "lng": body.lng,
     }
+    if status == "late":
+        local_hhmm = check_in_dt.astimezone(TZ).strftime("%H:%M")
+        if local_hhmm > "12:00":
+            doc["late_category"] = "potong_cuti"
+            doc["late_review_status"] = "auto"
+            doc["leave_deducted"] = 0.5
+            doc["yellow_card"] = False
+        else:
+            doc["late_category"] = "perlu_approval"
+            doc["late_review_status"] = "pending"
+            doc["leave_deducted"] = 0
+            doc["yellow_card"] = True
     await db.attendance.insert_one(doc)
+    if status == "late" and doc.get("late_category") == "potong_cuti":
+        await db.leave_deductions.insert_one({
+            "user_id": str(user["_id"]), "date": date, "days": 0.5,
+            "reason": "Terlambat melewati pukul 12:00", "created_at": now_iso()})
     if status == "late":
         t = check_in_dt.astimezone(TZ).strftime("%H:%M")
-        await send_push_to_users([str(user["_id"])], "Absensi Terlambat",
-                                 f"Anda tercatat TELAT pada {t} WIB.",
-                                 url="/#history", tag="late")
-        await send_push_to_users(await _approver_ids(), "Karyawan Terlambat",
+        if doc.get("late_category") == "potong_cuti":
+            await send_push_to_users([str(user["_id"])], "Terlambat — Potong Cuti",
+                                     f"Check-in {t} WIB (lewat 12:00). Cuti dipotong 0,5 hari.",
+                                     url="/#history", tag="late")
+        else:
+            await send_push_to_users([str(user["_id"])], "Absensi Terlambat",
+                                     f"Anda tercatat TELAT pada {t} WIB. Mohon isi alasan keterlambatan.",
+                                     url="/#history", tag="late")
+        await send_push_to_users(await _late_approver_ids(), "Karyawan Terlambat",
                                  f"{user.get('name')} check-in telat ({t} WIB).",
-                                 url="/#monitoring", tag="late")
+                                 url="/#dashboard", tag="late")
     doc["_id"] = "tmp"
     return att_public(doc, user)
 
@@ -1033,13 +1073,15 @@ async def leave_balance(user_id: Optional[str] = Query(None),
     settings = await get_settings()
     quota = settings.get("leave_quota", 12)
     year = datetime.now(TZ).year
-    used = await _leave_used_days(target, year)
+    used_leave = await _leave_used_days(target, year)
+    deducted = await _year_deductions(target, year)
+    used = used_leave + deducted
     pend = 0
     async for r in db.leave_requests.find(
             {"user_id": target, "status": "pending", "leave_type": "tahunan",
              "start_date": {"$gte": f"{year}-01-01", "$lte": f"{year}-12-31"}}):
         pend += int(r.get("days", 0))
-    return {"year": year, "quota": quota, "used": used, "pending": pend,
+    return {"year": year, "quota": quota, "used": used, "deducted": deducted, "pending": pend,
             "remaining": max(0, quota - used)}
 
 
@@ -1060,7 +1102,7 @@ async def create_leave_request(body: LeaveRequestBody, user: dict = Depends(get_
     settings = await get_settings()
     quota = settings.get("leave_quota", 12)
     if body.leave_type == "tahunan":
-        used = await _leave_used_days(str(user["_id"]), s.year)
+        used = await _leave_used_days(str(user["_id"]), s.year) + await _year_deductions(str(user["_id"]), s.year)
         if used + days > quota:
             raise HTTPException(status_code=400,
                                 detail=f"Sisa cuti tahunan tidak cukup (sisa {max(0, quota - used)} hari)")
@@ -1163,6 +1205,141 @@ async def set_reviewer(emp_id: str, body: ReviewerBody, user: dict = Depends(req
         raise HTTPException(status_code=400, detail="Reviewer hanya dapat ditunjuk untuk Manager")
     await db.users.update_one({"_id": target["_id"]}, {"$set": {"is_reviewer": body.is_reviewer}})
     return {"ok": True, "is_reviewer": body.is_reviewer}
+
+
+@api_router.put("/employees/{emp_id}/kpi-access")
+async def set_kpi_access(emp_id: str, body: KpiAccessBody, user: dict = Depends(require_roles(HR_ROLES))):
+    target = await db.users.find_one({"_id": _oid(emp_id)})
+    if not target:
+        raise HTTPException(status_code=404, detail="Karyawan tidak ditemukan")
+    await db.users.update_one({"_id": target["_id"]}, {"$set": {"kpi_access": body.kpi_access}})
+    return {"ok": True, "kpi_access": body.kpi_access}
+
+
+# ----------------------------------------------------------------------------
+# FASE 4 — Penanganan keterlambatan + KPI Kedisiplinan
+# ----------------------------------------------------------------------------
+LATE_APPROVER_ROLES = {"owner", "direksi", "hrd", "manager"}
+
+
+async def _late_approver_ids() -> list:
+    docs = await db.users.find({"role": {"$in": list(LATE_APPROVER_ROLES)}}, {"_id": 1}).to_list(300)
+    return [str(d["_id"]) for d in docs]
+
+
+async def _year_deductions(user_id: str, year: int) -> float:
+    total = 0.0
+    async for d in db.leave_deductions.find({"user_id": user_id, "date": {"$regex": f"^{year}"}}):
+        total += float(d.get("days", 0))
+    return total
+
+
+def _kpi_allowed(user: dict) -> bool:
+    role = user.get("role")
+    return role in ("owner", "direksi", "hrd") or (role == "manager" and bool(user.get("kpi_access")))
+
+
+@api_router.post("/late/reason")
+async def submit_late_reason(body: LateReasonBody, user: dict = Depends(get_current_user)):
+    date = today_str()
+    rec = await db.attendance.find_one({"user_id": str(user["_id"]), "date": date})
+    if not rec or rec.get("status") != "late":
+        raise HTTPException(status_code=404, detail="Tidak ada catatan keterlambatan hari ini")
+    await db.attendance.update_one({"_id": rec["_id"]}, {"$set": {"late_reason": body.reason}})
+    if rec.get("late_category") == "perlu_approval":
+        await send_push_to_users(await _late_approver_ids(), "Alasan Keterlambatan",
+                                 f"{user.get('name')}: {body.reason}", url="/#dashboard", tag="late")
+    return {"ok": True}
+
+
+@api_router.get("/late/pending")
+async def late_pending(user: dict = Depends(require_roles(LATE_APPROVER_ROLES))):
+    recs = await db.attendance.find({"status": "late", "late_category": "perlu_approval",
+                                     "late_review_status": "pending"}).sort("date", -1).to_list(500)
+    uids = list({r["user_id"] for r in recs})
+    users = {}
+    if uids:
+        for u in await db.users.find({"_id": {"$in": [_oid(x) for x in uids]}}).to_list(500):
+            users[str(u["_id"])] = u
+    items = []
+    for r in recs:
+        u = users.get(r["user_id"]) or {}
+        items.append({"id": str(r["_id"]), "user_id": r["user_id"], "name": u.get("name"),
+                      "department": u.get("department"), "employee_id": u.get("employee_id"),
+                      "date": r["date"], "check_in_time": _fmt_local_time(r.get("check_in")),
+                      "reason": r.get("late_reason")})
+    return {"items": items, "count": len(items)}
+
+
+@api_router.post("/late/{att_id}/approve")
+async def approve_late(att_id: str, body: LateDecisionBody,
+                       user: dict = Depends(require_roles(LATE_APPROVER_ROLES))):
+    rec = await db.attendance.find_one({"_id": _oid(att_id)})
+    if not rec or rec.get("late_category") != "perlu_approval":
+        raise HTTPException(status_code=404, detail="Catatan tidak ditemukan")
+    if rec.get("late_review_status") != "pending":
+        raise HTTPException(status_code=400, detail="Sudah diproses")
+    t = _fmt_local_time(rec.get("check_in"))
+    compensated = t <= "10:00"
+    upd = {"late_review_status": "approved", "yellow_card": False,
+           "late_reviewed_by": user.get("name"), "late_reviewed_at": now_iso(),
+           "late_compensated": compensated}
+    if compensated:
+        upd["status"] = "present"
+    await db.attendance.update_one({"_id": rec["_id"]}, {"$set": upd})
+    await send_push_to_users([rec["user_id"]], "Keterlambatan Disetujui",
+                             f"Keterlambatan {rec['date']} disetujui" +
+                             (" — dihitung HADIR." if compensated else " (tetap tercatat Terlambat)."),
+                             url="/#history", tag="late")
+    return {"ok": True, "compensated": compensated}
+
+
+@api_router.post("/late/{att_id}/reject")
+async def reject_late(att_id: str, body: LateDecisionBody,
+                      user: dict = Depends(require_roles(LATE_APPROVER_ROLES))):
+    rec = await db.attendance.find_one({"_id": _oid(att_id)})
+    if not rec or rec.get("late_category") != "perlu_approval":
+        raise HTTPException(status_code=404, detail="Catatan tidak ditemukan")
+    if rec.get("late_review_status") != "pending":
+        raise HTTPException(status_code=400, detail="Sudah diproses")
+    await db.attendance.update_one({"_id": rec["_id"]}, {"$set": {
+        "late_review_status": "rejected", "yellow_card": True,
+        "late_reviewed_by": user.get("name"), "late_reviewed_at": now_iso(),
+        "late_reject_note": body.note or ""}})
+    await send_push_to_users([rec["user_id"]], "Keterlambatan Ditolak",
+                             f"Keterlambatan {rec['date']} ditolak — Anda mendapat Kartu Kuning. "
+                             f"{body.note or ''}".strip(), url="/#history", tag="late")
+    return {"ok": True}
+
+
+@api_router.get("/kpi/discipline")
+async def kpi_discipline(month: Optional[str] = Query(None), user: dict = Depends(get_current_user)):
+    if not _kpi_allowed(user):
+        raise HTTPException(status_code=403, detail="Anda tidak memiliki akses papan KPI")
+    month = month or datetime.now(TZ).strftime("%Y-%m")
+    late_recs = await db.attendance.find(
+        {"date": {"$regex": f"^{month}"}, "status": {"$in": ["late", "present"]}}).to_list(50000)
+    deds = await db.leave_deductions.find({"date": {"$regex": f"^{month}"}}).to_list(50000)
+    agg = {}
+    for r in late_recs:
+        if r.get("status") == "late" or r.get("late_category"):
+            a = agg.setdefault(r["user_id"], {"yellow": 0, "late": 0, "deduct": 0.0})
+            if r.get("late_category"):
+                a["late"] += 1
+                if r.get("yellow_card"):
+                    a["yellow"] += 1
+    for d in deds:
+        a = agg.setdefault(d["user_id"], {"yellow": 0, "late": 0, "deduct": 0.0})
+        a["deduct"] += float(d.get("days", 0))
+    users = {str(u["_id"]): u for u in await db.users.find({}, {"password_hash": 0}).to_list(1000)}
+    rows = []
+    for uid, a in agg.items():
+        u = users.get(uid) or {}
+        rows.append({"user_id": uid, "name": u.get("name"), "department": u.get("department"),
+                     "employee_id": u.get("employee_id"), "yellow_cards": a["yellow"],
+                     "late_count": a["late"], "leave_deducted": round(a["deduct"], 1)})
+    rows.sort(key=lambda x: (x["yellow_cards"] + x["leave_deducted"], x["late_count"]), reverse=True)
+    return {"month": month, "rows": rows, "can_access": True}
 
 
 # ----------------------------------------------------------------------------
