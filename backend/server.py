@@ -124,6 +124,7 @@ def public_user(u: dict) -> dict:
         "position": u.get("position"),
         "employee_id": u.get("employee_id"),
         "phone": u.get("phone"),
+        "is_reviewer": bool(u.get("is_reviewer")),
         "face_enrolled": bool(u.get("face_descriptor")),
         "created_at": u.get("created_at"),
     }
@@ -153,7 +154,15 @@ def now_iso() -> str:
     return datetime.now(timezone.utc).isoformat()
 
 
-DEFAULT_SETTINGS = {"work_start": "09:00", "work_end": "17:00", "tolerance_minutes": 15}
+def _oid(s: str) -> ObjectId:
+    try:
+        return ObjectId(s)
+    except Exception:
+        raise HTTPException(status_code=404, detail="Data tidak ditemukan")
+
+
+DEFAULT_SETTINGS = {"work_start": "09:00", "work_end": "17:00", "tolerance_minutes": 15,
+                    "leave_quota": 12}
 
 
 async def get_settings() -> dict:
@@ -164,6 +173,7 @@ async def get_settings() -> dict:
         "work_start": doc.get("work_start", DEFAULT_SETTINGS["work_start"]),
         "work_end": doc.get("work_end", DEFAULT_SETTINGS["work_end"]),
         "tolerance_minutes": int(doc.get("tolerance_minutes", DEFAULT_SETTINGS["tolerance_minutes"])),
+        "leave_quota": int(doc.get("leave_quota", DEFAULT_SETTINGS["leave_quota"])),
     }
 
 
@@ -271,6 +281,22 @@ class SettingsBody(BaseModel):
     work_start: str
     work_end: str
     tolerance_minutes: int
+    leave_quota: Optional[int] = 12
+
+
+class LeaveRequestBody(BaseModel):
+    leave_type: str = "tahunan"
+    start_date: str
+    end_date: str
+    reason: Optional[str] = ""
+
+
+class LeaveDecisionBody(BaseModel):
+    note: Optional[str] = ""
+
+
+class ReviewerBody(BaseModel):
+    is_reviewer: bool
 
 
 class EmployeeBody(BaseModel):
@@ -907,13 +933,236 @@ async def update_settings(body: SettingsBody, user: dict = Depends(require_roles
     if not (0 <= body.tolerance_minutes <= 120):
         raise HTTPException(status_code=400, detail="Toleransi harus 0–120 menit")
     payload = {"work_start": body.work_start, "work_end": body.work_end,
-               "tolerance_minutes": body.tolerance_minutes}
+               "tolerance_minutes": body.tolerance_minutes,
+               "leave_quota": body.leave_quota if body.leave_quota is not None else 12}
     if user["role"] in APPROVER_ROLES:
         await _apply_settings(payload)
         return {"ok": True, "applied": True, **payload}
     summary = (f"Ubah jadwal kerja: masuk {body.work_start}, pulang {body.work_end}, "
                f"toleransi {body.tolerance_minutes} menit")
     return await _create_request("settings", user, summary=summary, payload=payload)
+
+
+# ----------------------------------------------------------------------------
+# Pengajuan Cuti (Leave) — approval 3 layer: HRD -> Direksi/Manager -> Reviewer
+# ----------------------------------------------------------------------------
+LEAVE_TYPE_LABEL = {"tahunan": "Cuti Tahunan", "sakit": "Sakit", "izin": "Izin"}
+LEAVE_STAGES = ["hrd", "direksi", "reviewer"]
+LEAVE_STAGE_LABEL = {"hrd": "HRD", "direksi": "Direksi/Manager", "reviewer": "Reviewer", "done": "Selesai"}
+
+
+def _count_weekdays_inclusive(start: str, end: str) -> int:
+    s = datetime.strptime(start, "%Y-%m-%d").date()
+    e = datetime.strptime(end, "%Y-%m-%d").date()
+    if e < s:
+        return 0
+    n, d = 0, s
+    while d <= e:
+        if d.weekday() < 5:
+            n += 1
+        d += timedelta(days=1)
+    return n
+
+
+async def _leave_used_days(user_id: str, year: int) -> int:
+    total = 0
+    async for r in db.leave_requests.find(
+            {"user_id": user_id, "status": "approved", "leave_type": "tahunan",
+             "start_date": {"$gte": f"{year}-01-01", "$lte": f"{year}-12-31"}}):
+        total += int(r.get("days", 0))
+    return total
+
+
+def leave_public(r: dict) -> dict:
+    return {
+        "id": str(r["_id"]),
+        "user_id": r.get("user_id"),
+        "user_name": r.get("user_name"),
+        "department": r.get("department"),
+        "leave_type": r.get("leave_type"),
+        "leave_type_label": LEAVE_TYPE_LABEL.get(r.get("leave_type"), r.get("leave_type")),
+        "start_date": r.get("start_date"),
+        "end_date": r.get("end_date"),
+        "days": r.get("days"),
+        "reason": r.get("reason"),
+        "status": r.get("status"),
+        "stage": r.get("stage"),
+        "stage_label": LEAVE_STAGE_LABEL.get(r.get("stage"), r.get("stage")),
+        "approvals": r.get("approvals", []),
+        "reject_reason": r.get("reject_reason"),
+        "created_at": r.get("created_at"),
+    }
+
+
+def _leave_can_act(user: dict, req: dict) -> bool:
+    if req.get("status") != "pending":
+        return False
+    role = user.get("role")
+    if role == "owner":
+        return True
+    stage = req.get("stage")
+    if stage == "hrd":
+        return role == "hrd"
+    if stage == "direksi":
+        return role in ("direksi", "manager")
+    if stage == "reviewer":
+        return bool(user.get("is_reviewer"))
+    return False
+
+
+async def _leave_stage_notify_ids(stage: str) -> list:
+    if stage == "hrd":
+        q = {"role": "hrd"}
+    elif stage == "direksi":
+        q = {"role": {"$in": ["direksi", "manager"]}}
+    elif stage == "reviewer":
+        q = {"is_reviewer": True}
+    else:
+        return []
+    docs = await db.users.find(q, {"_id": 1}).to_list(200)
+    ids = [str(d["_id"]) for d in docs]
+    owners = await db.users.find({"role": "owner"}, {"_id": 1}).to_list(50)
+    ids += [str(d["_id"]) for d in owners]
+    return list(set(ids))
+
+
+@api_router.get("/leave/balance")
+async def leave_balance(user_id: Optional[str] = Query(None),
+                        user: dict = Depends(get_current_user)):
+    target = user_id if (user_id and user["role"] in MONITOR_ROLES) else str(user["_id"])
+    settings = await get_settings()
+    quota = settings.get("leave_quota", 12)
+    year = datetime.now(TZ).year
+    used = await _leave_used_days(target, year)
+    pend = 0
+    async for r in db.leave_requests.find(
+            {"user_id": target, "status": "pending", "leave_type": "tahunan",
+             "start_date": {"$gte": f"{year}-01-01", "$lte": f"{year}-12-31"}}):
+        pend += int(r.get("days", 0))
+    return {"year": year, "quota": quota, "used": used, "pending": pend,
+            "remaining": max(0, quota - used)}
+
+
+@api_router.post("/leave-requests")
+async def create_leave_request(body: LeaveRequestBody, user: dict = Depends(get_current_user)):
+    if body.leave_type not in LEAVE_TYPE_LABEL:
+        raise HTTPException(status_code=400, detail="Jenis cuti tidak valid")
+    try:
+        s = datetime.strptime(body.start_date, "%Y-%m-%d").date()
+        e = datetime.strptime(body.end_date, "%Y-%m-%d").date()
+    except Exception:
+        raise HTTPException(status_code=400, detail="Tanggal tidak valid")
+    if e < s:
+        raise HTTPException(status_code=400, detail="Tanggal selesai sebelum tanggal mulai")
+    days = _count_weekdays_inclusive(body.start_date, body.end_date)
+    if days <= 0:
+        raise HTTPException(status_code=400, detail="Rentang tidak mengandung hari kerja (Senin–Jumat)")
+    settings = await get_settings()
+    quota = settings.get("leave_quota", 12)
+    if body.leave_type == "tahunan":
+        used = await _leave_used_days(str(user["_id"]), s.year)
+        if used + days > quota:
+            raise HTTPException(status_code=400,
+                                detail=f"Sisa cuti tahunan tidak cukup (sisa {max(0, quota - used)} hari)")
+    doc = {
+        "user_id": str(user["_id"]), "user_name": user.get("name"),
+        "department": user.get("department"), "leave_type": body.leave_type,
+        "start_date": body.start_date, "end_date": body.end_date, "days": days,
+        "reason": body.reason or "", "status": "pending", "stage": "hrd",
+        "approvals": [], "created_at": now_iso(),
+    }
+    res = await db.leave_requests.insert_one(doc)
+    doc["_id"] = res.inserted_id
+    await send_push_to_users(await _leave_stage_notify_ids("hrd"), "Pengajuan Cuti Baru",
+                             f"{user.get('name')} mengajukan {LEAVE_TYPE_LABEL[body.leave_type]} "
+                             f"{days} hari ({body.start_date} s/d {body.end_date}).",
+                             url="/#leave", tag="leave")
+    return leave_public(doc)
+
+
+@api_router.get("/leave-requests")
+async def list_leave_requests(scope: str = Query("all"), status: Optional[str] = Query(None),
+                              user: dict = Depends(get_current_user)):
+    can_approve = user["role"] in MONITOR_ROLES or bool(user.get("is_reviewer"))
+    query = {}
+    if scope == "mine" or not can_approve:
+        query["user_id"] = str(user["_id"])
+    if status:
+        query["status"] = status
+    docs = await db.leave_requests.find(query).sort("created_at", -1).to_list(2000)
+    items = []
+    for d in docs:
+        it = leave_public(d)
+        it["can_act"] = _leave_can_act(user, d)
+        items.append(it)
+    return {"items": items, "count": len(items)}
+
+
+@api_router.get("/leave-requests/pending-count")
+async def leave_pending_count(user: dict = Depends(get_current_user)):
+    docs = await db.leave_requests.find({"status": "pending"}).to_list(2000)
+    n = sum(1 for d in docs if _leave_can_act(user, d))
+    return {"count": n}
+
+
+@api_router.post("/leave-requests/{req_id}/approve")
+async def approve_leave(req_id: str, body: LeaveDecisionBody, user: dict = Depends(get_current_user)):
+    req = await db.leave_requests.find_one({"_id": _oid(req_id)})
+    if not req:
+        raise HTTPException(status_code=404, detail="Pengajuan tidak ditemukan")
+    if not _leave_can_act(user, req):
+        raise HTTPException(status_code=403, detail="Anda tidak berwenang menyetujui tahap ini")
+    stage = req["stage"]
+    approvals = req.get("approvals", [])
+    approvals.append({"stage": stage, "by_id": str(user["_id"]), "by_name": user.get("name"),
+                      "decision": "approved", "note": body.note or "", "at": now_iso()})
+    idx = LEAVE_STAGES.index(stage)
+    if idx + 1 < len(LEAVE_STAGES):
+        next_stage = LEAVE_STAGES[idx + 1]
+        await db.leave_requests.update_one(
+            {"_id": req["_id"]}, {"$set": {"stage": next_stage, "approvals": approvals}})
+        await send_push_to_users(await _leave_stage_notify_ids(next_stage), "Persetujuan Cuti",
+                                 f"Pengajuan cuti {req.get('user_name')} menunggu persetujuan Anda "
+                                 f"(tahap {LEAVE_STAGE_LABEL[next_stage]}).",
+                                 url="/#leave", tag="leave")
+        return {"ok": True, "stage": next_stage, "status": "pending"}
+    await db.leave_requests.update_one(
+        {"_id": req["_id"]}, {"$set": {"stage": "done", "status": "approved", "approvals": approvals}})
+    await send_push_to_users([req["user_id"]], "Cuti Disetujui",
+                             f"Pengajuan {LEAVE_TYPE_LABEL.get(req.get('leave_type'))} "
+                             f"{req.get('start_date')} s/d {req.get('end_date')} telah DISETUJUI penuh.",
+                             url="/#leave", tag="leave")
+    return {"ok": True, "stage": "done", "status": "approved"}
+
+
+@api_router.post("/leave-requests/{req_id}/reject")
+async def reject_leave(req_id: str, body: LeaveDecisionBody, user: dict = Depends(get_current_user)):
+    req = await db.leave_requests.find_one({"_id": _oid(req_id)})
+    if not req:
+        raise HTTPException(status_code=404, detail="Pengajuan tidak ditemukan")
+    if not _leave_can_act(user, req):
+        raise HTTPException(status_code=403, detail="Anda tidak berwenang menolak tahap ini")
+    approvals = req.get("approvals", [])
+    approvals.append({"stage": req["stage"], "by_id": str(user["_id"]), "by_name": user.get("name"),
+                      "decision": "rejected", "note": body.note or "", "at": now_iso()})
+    await db.leave_requests.update_one(
+        {"_id": req["_id"]}, {"$set": {"status": "rejected", "stage": "done", "approvals": approvals,
+                                       "reject_reason": body.note or "Ditolak"}})
+    await send_push_to_users([req["user_id"]], "Cuti Ditolak",
+                             f"Pengajuan cuti Anda ditolak pada tahap {LEAVE_STAGE_LABEL.get(req['stage'], req['stage'])}. "
+                             f"{body.note or ''}".strip(), url="/#leave", tag="leave")
+    return {"ok": True, "status": "rejected"}
+
+
+@api_router.put("/employees/{emp_id}/reviewer")
+async def set_reviewer(emp_id: str, body: ReviewerBody, user: dict = Depends(require_roles(HR_ROLES))):
+    target = await db.users.find_one({"_id": _oid(emp_id)})
+    if not target:
+        raise HTTPException(status_code=404, detail="Karyawan tidak ditemukan")
+    if body.is_reviewer and target.get("role") != "manager":
+        raise HTTPException(status_code=400, detail="Reviewer hanya dapat ditunjuk untuk Manager")
+    await db.users.update_one({"_id": target["_id"]}, {"$set": {"is_reviewer": body.is_reviewer}})
+    return {"ok": True, "is_reviewer": body.is_reviewer}
 
 
 # ----------------------------------------------------------------------------
@@ -1125,7 +1374,7 @@ async def notifications(user: dict = Depends(get_current_user)):
         reqs = await db.employee_requests.find({"status": "pending"}).sort("created_at", -1).to_list(50)
         for r in reqs:
             items.append({
-                "id": str(r["_id"]), "type": "pending",
+                "id": str(r["_id"]), "type": "pending", "route": "approvals",
                 "title": f"Permintaan: {_ACTION_LABEL.get(r['action'], r['action'])}",
                 "body": r.get("summary"), "by": r.get("requested_by_name"),
                 "created_at": r.get("created_at"),
@@ -1136,11 +1385,34 @@ async def notifications(user: dict = Depends(get_current_user)):
         ).sort("reviewed_at", -1).to_list(50)
         for r in reqs:
             items.append({
-                "id": str(r["_id"]), "type": r["status"],
+                "id": str(r["_id"]), "type": r["status"], "route": "approvals",
                 "title": "Permintaan disetujui" if r["status"] == "approved" else "Permintaan ditolak",
                 "body": r.get("summary"), "by": r.get("reviewed_by_name"),
                 "created_at": r.get("reviewed_at"),
             })
+
+    # Leave (cuti) notifications — for anyone who can act on a stage
+    pending_leaves = await db.leave_requests.find({"status": "pending"}).sort("created_at", -1).to_list(100)
+    for r in pending_leaves:
+        if _leave_can_act(user, r):
+            items.append({
+                "id": "leave-" + str(r["_id"]), "type": "leave", "route": "leave",
+                "title": f"Persetujuan Cuti — {LEAVE_STAGE_LABEL.get(r.get('stage'), '')}",
+                "body": f"{r.get('user_name')} · {LEAVE_TYPE_LABEL.get(r.get('leave_type'), '')} {r.get('days')} hari",
+                "by": r.get("user_name"), "created_at": r.get("created_at"),
+            })
+    my_leaves = await db.leave_requests.find(
+        {"user_id": str(user["_id"]), "status": {"$in": ["approved", "rejected"]}}
+    ).sort("created_at", -1).to_list(20)
+    for r in my_leaves:
+        items.append({
+            "id": "leave-" + str(r["_id"]), "type": r["status"], "route": "leave",
+            "title": "Cuti disetujui" if r["status"] == "approved" else "Cuti ditolak",
+            "body": f"{LEAVE_TYPE_LABEL.get(r.get('leave_type'), '')} {r.get('start_date')} s/d {r.get('end_date')}",
+            "by": "", "created_at": r.get("created_at"),
+        })
+
+    items.sort(key=lambda x: x.get("created_at") or "", reverse=True)
     return {"items": items, "count": len(items)}
 
 

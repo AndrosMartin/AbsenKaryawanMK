@@ -6,6 +6,7 @@ const NAV = [
   { id: "dashboard", label: "Dashboard", icon: "ph-chart-line-up", roles: ui.MONITOR_ROLES },
   { id: "checkin", label: "Absensi", icon: "ph-fingerprint", roles: ui.ALL_USERS },
   { id: "history", label: "Riwayat Saya", icon: "ph-clock-counter-clockwise", roles: ui.ALL_USERS },
+  { id: "leave", label: "Cuti", icon: "ph-airplane-takeoff", roles: ui.ALL_USERS },
   { id: "monitoring", label: "Monitoring", icon: "ph-monitor", roles: ui.MONITOR_ROLES },
   { id: "employees", label: "Karyawan", icon: "ph-users-three", roles: ui.MONITOR_ROLES },
   { id: "approvals", label: "Persetujuan", icon: "ph-seal-check", roles: ui.HR_ROLES },
@@ -53,7 +54,7 @@ async function navigate(route) {
   const content = document.getElementById("app-content");
   content.innerHTML = `<div class="flex items-center justify-center py-32 text-slate-400"><i class="ph ph-circle-notch spin text-3xl"></i></div>`;
   try {
-    const mod = await import(`/modules/${route}.js?v=12`);
+    const mod = await import(`/modules/${route}.js?v=13`);
     content.innerHTML = "";
     await mod.render(content, ctx);
   } catch (e) {
@@ -171,6 +172,7 @@ function markSeen(ids) {
 function notifIcon(type) {
   if (type === "approved") return ["ph-check-circle", "text-emerald-600", "bg-emerald-50"];
   if (type === "rejected") return ["ph-x-circle", "text-rose-600", "bg-rose-50"];
+  if (type === "leave") return ["ph-airplane-takeoff", "text-sky-600", "bg-sky-50"];
   return ["ph-bell-ringing", "text-gold-600", "bg-gold-50"];
 }
 
@@ -194,7 +196,7 @@ async function refreshNotifications() {
     list.innerHTML = data.items.length ? data.items.map((i) => {
       const [icon, color, bg] = notifIcon(i.type);
       const isUnread = !seen.has(i.id);
-      return `<button data-notif-item="${i.id}" class="w-full text-left px-4 py-3 border-b border-slate-100 last:border-0 hover:bg-slate-50 flex gap-3 ${isUnread ? "bg-gold-50/40" : ""}">
+      return `<button data-notif-item="${i.id}" data-route="${i.route || "approvals"}" class="w-full text-left px-4 py-3 border-b border-slate-100 last:border-0 hover:bg-slate-50 flex gap-3 ${isUnread ? "bg-gold-50/40" : ""}">
         <div class="h-8 w-8 rounded-lg ${bg} ${color} flex items-center justify-center shrink-0"><i class="ph-fill ${icon}"></i></div>
         <div class="min-w-0">
           <p class="text-sm font-medium text-slate-900">${i.title}</p>
@@ -205,7 +207,7 @@ async function refreshNotifications() {
     }).join("") : `<p class="px-4 py-10 text-center text-sm text-slate-400">Tidak ada notifikasi</p>`;
     list.querySelectorAll("[data-notif-item]").forEach((b) => b.onclick = () => {
       document.getElementById("notif-panel").classList.add("hidden");
-      navigate("approvals");
+      navigate(b.getAttribute("data-route") || "approvals");
     });
   }
   return data;

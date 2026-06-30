@@ -1,0 +1,53 @@
+{
+  "summary": "FASE 3 (Pengajuan Cuti / Leave) backend + frontend verification. 24/24 backend pytest passing covering 3-layer sequential approval (HRD -> Direksi -> Reviewer), wrong-role 403 guards, rejection at any stage, reviewer toggle (managers only), balance (quota=12 + pending separation), leave-list scoping with can_act, pending-count, notifications, settings leave_quota persistence, and validation (bad date / end<start / no weekdays / quota exceeded). Frontend Cuti page (data-testid leave-page) loads for ALL users, balance cards (Jatah/Terpakai/Menunggu/Sisa = 12/0/0/12), submit form lv-type/lv-start/lv-end/lv-reason/lv-submit-btn works, live hint '#lv-days' shows e.g. '5 hari kerja', 3 tabs (tab-mine/tab-approve/tab-all) visible for approver. Reviewer toggle on Karyawan page (data-testid reviewer-{id}) toggles 'Jadikan Reviewer' <-> 'Reviewer ✓' with success toasts; non-manager rows show '—'. Settings page leave-quota field present and value = 12. No non-Tailwind console errors. DB cleanup verified: only owner remains, leave_requests=0, settings at defaults.",
+  "backend_issues": {
+    "critical": [],
+    "minor": [
+      {"endpoint": "POST /api/leave-requests/{id}/reject", "issue": "Response is {ok:true,status:'rejected'} only — does not include 'stage' or 'reject_reason' like approve's response. Frontend re-fetches list anyway, but the approve endpoint does return stage. Minor inconsistency; consider returning the full leave_public(doc)."}
+    ]
+  },
+  "frontend_issues": {
+    "ui_bugs": [],
+    "integration_issues": [],
+    "design_issues": []
+  },
+  "test_report_links": [
+    "/app/backend/tests/test_fase3_leave.py",
+    "/app/test_reports/pytest/fase3_results.xml"
+  ],
+  "action_items": [],
+  "critical_code_review_comments": [
+    "server.py grew to 1622 lines — still single-file; strong recommendation to split into modules (auth/employees/attendance/leave/exports/settings/push/notifications) before adding more FASEs.",
+    "Reject endpoint response shape inconsistent with approve (no stage / leave_public). Consider returning leave_public(updated_doc) from both endpoints for consistency and to avoid an extra GET round-trip on the client.",
+    "Owner override in _leave_can_act (role=='owner' -> True) is intentional per spec but means audit trail can have owner approving multiple stages; OK as documented fallback.",
+    "Leave items in /api/notifications use synthetic id prefix 'leave-' to namespace from employee_request ids — fine, but client must not assume MongoDB ObjectId format for notification ids.",
+    "_count_weekdays_inclusive uses date.weekday() < 5 (Mon-Fri); no holiday calendar — acceptable per spec but flag for future enhancement (national holidays).",
+    "DELETE /api/employees/{id} does not cascade-delete the user's leave_requests (orphan rows can persist). Either cascade or add an admin cleanup endpoint."
+  ],
+  "updated_files": [
+    "/app/backend/tests/test_fase3_leave.py"
+  ],
+  "success_rate": {"backend": "100% (24/24)", "frontend": "100%"},
+  "test_credentials": "Owner: owner@company.com / password123. Created and DELETED transient test users: TEST_staff_f3, TEST_hrd_f3, TEST_direksi_f3, TEST_mgr_f3, TEST_rev_f3 (manager+reviewer) and TEST_uimgr (UI run). All cleaned up; DB now only owner.",
+  "seed_data_creation": "Created 5 backend test users + 1 UI test manager during runs; all deleted in fixture teardown / UI cleanup. Also deleted 7 orphan leave_requests directly from MongoDB (pymongo) since DELETE /employees does not cascade. settings restored to defaults (work_start=09:00, work_end=17:00, tolerance=15, leave_quota=12).",
+  "retest_needed": false,
+  "main_agent_can_self_test": true,
+  "context_for_next_testing_agent": "pytest /app/backend/tests/test_fase3_leave.py covers: leave validation (bad date, end<start, no weekdays, quota>12 -> 400), 3-layer sequential approval (HRD->Direksi->Reviewer) with wrong-role 403 guards at each stage AND non-reviewer manager blocked at reviewer stage, rejection at HRD finalizes status='rejected'+stage='done'+reject_reason persisted, reviewer toggle PUT /api/employees/{id}/reviewer only allowed on role=='manager' (400 otherwise), GET /api/employees returns is_reviewer, GET /api/leave/balance shape {year,quota,used,pending,remaining} with quota=12 and pending tahunan counted, GET /api/leave-requests returns {items,count} envelope with can_act per user/stage, /api/leave-requests/pending-count returns {count}, /api/notifications includes type='leave' route='leave' items for approvers and route='leave' decided items for requester, /api/settings exposes leave_quota and owner PUT persists it. Playwright validated nav-leave for ALL users, leave-page testids (lv-*, tabs), live hint #lv-days '5 hari kerja', reviewer toggle on Karyawan page (Jadikan Reviewer <-> Reviewer ✓) with toasts, settings page leave-quota field. Frontend uses localStorage key 'absensipro_token' (not 'token') and /api/leave-requests returns {items,count} envelope.",
+  "verified_features": [
+    "POST /api/leave-requests validation: bad date -> 400, end<start -> 400, Sat/Sun-only range -> 400, tahunan exceeding quota -> 400",
+    "Sequential approval HRD(role=hrd)->Direksi(role=direksi/manager)->Reviewer(is_reviewer=true) all enforced; each wrong role at each stage returns 403",
+    "Approve response: {ok,stage:next_stage,status} until final, then {ok,stage:'done',status:'approved'}",
+    "Reject at any stage: status=rejected, stage=done, reject_reason persisted; subsequent approve -> 403",
+    "Balance: quota=12, used increments by approved tahunan days, pending counts pending tahunan, remaining=quota-used",
+    "PUT /api/employees/{id}/reviewer: HR_ROLES only, requires manager role else 400; GET /employees includes is_reviewer",
+    "GET /api/leave-requests scope=mine filters to own; scope=all for approvers includes can_act per stage",
+    "GET /api/leave-requests/pending-count returns {count} of stages this user can act on",
+    "GET /api/notifications includes leave items (type='leave', route='leave') for approvers and decided items for requester",
+    "GET/PUT /api/settings includes leave_quota; owner can update and value persists",
+    "Frontend Cuti page (data-testid leave-page) visible to ALL roles; balance cards, submit form, 3 tabs (tab-mine/tab-approve/tab-all), live hint '5 hari kerja'",
+    "Karyawan page reviewer-{id} toggle works for manager rows with proper toasts; non-managers show '—'",
+    "Settings page has leave-quota field (default 12)",
+    "Regression FASE 1/2: owner login + all nav (dashboard/absensi/riwayat/cuti/monitoring/karyawan/persetujuan/lokasi/pengaturan/wajah/profil) load; no non-Tailwind console errors"
+  ],
+  "rca of the issue": "N/A — all tests passed. Initial test-file failures were test-side issues (incorrect assumptions about response envelopes: /api/leave-requests and /api/notifications return {items,count}; reject endpoint returns minimal {ok,status}); fixed in test file by reading .items and verifying via GET round-trip."
+}
