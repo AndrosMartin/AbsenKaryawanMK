@@ -52,6 +52,15 @@ Play CDN native, modul dipanggil dinamis dalam 1 index. Desain dashboard profesi
 - `statusPill` tambah state "tolerance" (kuning); "late" jadi merah.
 - Verified: testing agent iteration_7 — backend 11/11 pytest PASS, frontend full PASS (nav gating, dashboard/monitoring/settings, alur approval HRD), tanpa regresi.
 
+## Implemented (2026-06-30) — FASE 3 (Pengajuan Cuti / Leave)
+- **Pengajuan cuti** (menu **Cuti**, semua role): jenis (Tahunan/Sakit/Izin), tanggal mulai–selesai (hitung hari kerja Sen–Jum), alasan. Hanya "tahunan" memotong jatah.
+- **Approval 3 layer berurutan, ketiganya wajib setuju**: HRD → Direksi/Manager → **Reviewer** (Manager yang ditandai). Owner = override fallback. Penolakan di tahap mana pun langsung menggagalkan.
+- **Jatah cuti 12/tahun** (dapat diubah di Pengaturan: `leave_quota`). Saldo: `GET /api/leave/balance` {quota, used, pending, remaining}. Pengajuan tahunan melebihi sisa → ditolak.
+- **Reviewer toggle** di Karyawan (`PUT /api/employees/{id}/reviewer`, hanya untuk Manager). `public_user` kini punya `is_reviewer`.
+- Endpoint: `POST/GET /api/leave-requests`, `/{id}/approve`, `/{id}/reject`, `/pending-count`. Notifikasi (bell + web push) untuk tiap tahap & keputusan, route ke halaman Cuti.
+- Verified: testing agent iteration_8 — backend 24/24 pytest PASS (alur 3 layer + guard 403 + reject + saldo + validasi), frontend 100%, tanpa regresi. DB dibersihkan (hanya owner).
+- Catatan kecil/backlog: (a) DELETE karyawan belum cascade hapus `leave_requests` (orphan); (b) response reject minimal (frontend tetap re-fetch); (c) belum ada kalender libur nasional dalam hitungan hari kerja; (d) server.py ~1622 baris — perlu dipecah jadi modul.
+
 ## Backlog — FASE berikutnya
 - **FASE 3**: Pengajuan Cuti multi-layer (HRD → Direksi/Manager → Reviewer) + jatah cuti + penunjukan Reviewer.
 - **FASE 4** (aturan dikonfirmasi user, butuh sistem Cuti Fase 3 dulu):
