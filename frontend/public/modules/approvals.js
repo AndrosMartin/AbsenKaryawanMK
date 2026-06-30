@@ -8,6 +8,7 @@ export async function render(root, ctx) {
     create: ["Tambah Karyawan", "ph-user-plus", "text-emerald-600"],
     update: ["Ubah Data", "ph-pencil-simple", "text-sky-600"],
     delete: ["Hapus Karyawan", "ph-user-minus", "text-rose-600"],
+    settings: ["Ubah Jadwal Kerja", "ph-gear-six", "text-amber-600"],
   };
   const STATUS = {
     pending: ["Menunggu", "bg-amber-50 text-amber-700 border-amber-200", "ph-clock"],
@@ -47,6 +48,12 @@ export async function render(root, ctx) {
   function payloadPreview(r) {
     const p = r.payload || {};
     const parts = [];
+    if (r.action === "settings") {
+      if (p.work_start) parts.push(`Masuk: <span class="text-slate-700">${p.work_start}</span>`);
+      if (p.work_end) parts.push(`Pulang: <span class="text-slate-700">${p.work_end}</span>`);
+      if (p.tolerance_minutes != null) parts.push(`Toleransi: <span class="text-slate-700">${p.tolerance_minutes} menit</span>`);
+      return parts.length ? `<div class="mt-2 flex flex-wrap gap-x-4 gap-y-1 text-xs text-slate-400">${parts.join("")}</div>` : "";
+    }
     if (p.name) parts.push(`Nama: <span class="text-slate-700">${p.name}</span>`);
     if (p.email) parts.push(`Email: <span class="font-mono text-slate-700">${p.email}</span>`);
     if (p.role) parts.push(`Role: <span class="text-slate-700">${ui.ROLE_LABELS[p.role] || p.role}</span>`);

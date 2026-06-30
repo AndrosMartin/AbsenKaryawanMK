@@ -47,8 +47,9 @@ export function fmtDate(d) {
 export function statusPill(status) {
   const map = {
     present: ["Tepat Waktu", "bg-emerald-50 text-emerald-700 border-emerald-200", "ph-check-circle"],
-    late: ["Terlambat", "bg-amber-50 text-amber-700 border-amber-200", "ph-clock-countdown"],
-    absent: ["Tidak Hadir", "bg-rose-50 text-rose-700 border-rose-200", "ph-x-circle"],
+    tolerance: ["Toleransi", "bg-yellow-50 text-yellow-700 border-yellow-200", "ph-clock-clockwise"],
+    late: ["Terlambat", "bg-rose-50 text-rose-700 border-rose-200", "ph-clock-countdown"],
+    absent: ["Tidak Hadir", "bg-slate-100 text-slate-600 border-slate-200", "ph-x-circle"],
   };
   const [label, cls, icon] = map[status] || map.absent;
   return `<span class="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full text-xs font-medium border ${cls}">

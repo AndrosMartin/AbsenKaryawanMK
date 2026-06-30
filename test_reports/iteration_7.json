@@ -1,0 +1,48 @@
+{
+  "summary": "FASE 2 verification (global work-schedule + tolerance + 3 status). 11/11 backend pytest passing and full Playwright UI verification passing. No issues found.",
+  "backend_issues": {
+    "critical": [],
+    "minor": []
+  },
+  "frontend_issues": {
+    "ui_bugs": [],
+    "integration_issues": [],
+    "design_issues": []
+  },
+  "test_report_links": [
+    "/app/backend/tests/test_fase2.py",
+    "/app/test_reports/pytest/fase2_results.xml"
+  ],
+  "action_items": [],
+  "critical_code_review_comments": [
+    "server.py now 1351 lines — still single-file; recommend splitting (auth/employees/attendance/exports/push/settings) for maintainability.",
+    "_validate_hhmm accepts non-zero-padded hour like '9:00' (split+int parsing). Functional but inconsistent with the UI's HH:MM <input type=time> which always emits zero-padded. Not blocking.",
+    "PUT /api/settings: when HRD submits, response shape differs from owner (no {ok,applied,...}). Frontend already handles this via res.applied check. Consider documenting in API contract.",
+    "compute_status uses local TZ (TZ=Asia/Jakarta from server.py); ensure pytest server timezone consistency for future tests — handled by passing tzinfo=TZ in tests."
+  ],
+  "updated_files": [
+    "/app/backend/tests/test_fase2.py"
+  ],
+  "success_rate": {"backend": "100% (11/11)", "frontend": "100%"},
+  "test_credentials": "Owner: owner@company.com / password123. Created throwaway test_hrd_fase2@company.com (HRD), test_hrd_ui@company.com (HRD), test_mgr_ui@company.com (Manager) — all deleted after tests; settings restored to 09:00/17:00/15.",
+  "seed_data_creation": "Throwaway HRD/Manager users created via owner POST /api/employees, cleaned up post-test. Any settings request created during HRD-flow test was approved/rejected and settings doc reset to defaults.",
+  "retest_needed": false,
+  "main_agent_can_self_test": true,
+  "context_for_next_testing_agent": "Backend pytest /app/backend/tests/test_fase2.py covers: GET /api/settings (defaults + auth), PUT /api/settings owner direct-apply + persistence + validation (tolerance 0..120, HH:MM strict for clearly bad inputs incl '25:00','12:60','99:99'), HRD PUT->pending request with payload->owner approve applies, compute_status three-status (TZ-aware), /api/attendance/summary totals+rows include 'tolerance', xlsx 2 sheets + 'Toleransi' string present, PDF magic bytes. Playwright validated: nav-settings visible for owner+HRD, hidden for manager; Dashboard 5 cards (Total/Tepat Waktu/Toleransi/Terlambat/Tidak Hadir); Monitoring daily 5 cards; Monitoring rentang/rekap table headers include 'TOLERANSI'; Settings page (data-testid settings-page) has work-start, work-end, tolerance, settings-save-btn, live #rule-preview updates on input, save shows success toast 'Jadwal kerja berhasil disimpan', values persist on reload, no non-Tailwind console errors. Monitoring mode select values are: harian/rentang/minggu/bulan/tahun.",
+  "verified_features": [
+    "GET /api/settings -> {work_start:09:00, work_end:17:00, tolerance_minutes:15} (defaults) requires auth",
+    "PUT /api/settings as OWNER -> {ok:true, applied:true, ...}, GET reflects; validates tolerance 0..120 (400) and HH:MM (400)",
+    "PUT /api/settings as HRD -> pending request with action='settings' and payload {work_start,work_end,tolerance_minutes}; POST /api/employee-requests/{id}/approve applies the proposed settings",
+    "compute_status: 08:55->present, 09:00->present, 09:10/09:15->tolerance, 09:20->late (09:00 + 15min)",
+    "/api/attendance/summary totals & rows include 'tolerance' field",
+    "/api/attendance/summary/export?format=xlsx -> >=2 sheets, 'Toleransi' string present in worksheet/shared-strings XML",
+    "/api/attendance/summary/export?format=pdf -> %PDF magic bytes",
+    "Frontend nav-settings: visible owner/HRD, hidden manager (HR_ROLES gating correct)",
+    "Dashboard: 5 cards incl Toleransi card",
+    "Monitoring Harian: 5 cards (Total/Tepat Waktu/Toleransi/Terlambat/Tidak Hadir)",
+    "Monitoring Rentang (rekap): table headers include 'TOLERANSI'; rekap-row rendered",
+    "Settings page (data-testid=settings-page): work-start, work-end, tolerance inputs + live rule-preview reflecting new values + settings-save-btn",
+    "Owner save -> toast 'Jadwal kerja berhasil disimpan'; value persists after reload",
+    "Regression FASE 1: owner login + nav (dashboard/monitoring/employees/approvals/settings) all clickable; no non-Tailwind console errors"
+  ]
+}

@@ -78,11 +78,12 @@ export async function render(root, ctx) {
       </div>
     </div>
 
-    <div class="grid grid-cols-2 lg:grid-cols-4 gap-4">
+    <div class="grid grid-cols-2 lg:grid-cols-5 gap-4">
       ${stat("Total Karyawan", s.total, "Seluruh tim terdaftar", "ph-users-three", "bg-slate-100 text-slate-700")}
       ${stat("Tepat Waktu", s.present, "Hadir sesuai jadwal", "ph-check-circle", "bg-emerald-100 text-emerald-700")}
-      ${stat("Terlambat", s.late, "Hadir melewati jam masuk", "ph-clock-countdown", "bg-amber-100 text-amber-700")}
-      ${stat("Tidak Hadir", s.absent, "Belum check-in hari ini", "ph-x-circle", "bg-rose-100 text-rose-700")}
+      ${stat("Toleransi", s.tolerance ?? 0, "Dalam masa toleransi", "ph-clock-clockwise", "bg-yellow-100 text-yellow-700")}
+      ${stat("Terlambat", s.late, "Melewati toleransi", "ph-clock-countdown", "bg-rose-100 text-rose-700")}
+      ${stat("Tidak Hadir", s.absent, "Belum check-in hari ini", "ph-x-circle", "bg-slate-100 text-slate-500")}
     </div>
 
     <div class="grid lg:grid-cols-3 gap-6">

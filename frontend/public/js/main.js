@@ -10,6 +10,7 @@ const NAV = [
   { id: "employees", label: "Karyawan", icon: "ph-users-three", roles: ui.MONITOR_ROLES },
   { id: "approvals", label: "Persetujuan", icon: "ph-seal-check", roles: ui.HR_ROLES },
   { id: "offices", label: "Lokasi Kantor", icon: "ph-map-pin", roles: ui.MANAGE_ROLES },
+  { id: "settings", label: "Pengaturan", icon: "ph-gear-six", roles: ui.HR_ROLES },
   { id: "face", label: "Wajah Saya", icon: "ph-user-focus", roles: ui.ALL_USERS },
   { id: "profile", label: "Profil", icon: "ph-user-circle", roles: ui.ALL_USERS },
 ];
@@ -52,7 +53,7 @@ async function navigate(route) {
   const content = document.getElementById("app-content");
   content.innerHTML = `<div class="flex items-center justify-center py-32 text-slate-400"><i class="ph ph-circle-notch spin text-3xl"></i></div>`;
   try {
-    const mod = await import(`/modules/${route}.js?v=11`);
+    const mod = await import(`/modules/${route}.js?v=12`);
     content.innerHTML = "";
     await mod.render(content, ctx);
   } catch (e) {

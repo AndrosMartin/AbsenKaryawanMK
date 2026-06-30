@@ -151,13 +151,15 @@ export async function render(root, ctx) {
 
   // ---- Daily (harian) ----
   function renderDailySummary() {
-    const c = { present: 0, late: 0, absent: 0 };
+    const c = { present: 0, tolerance: 0, late: 0, absent: 0 };
     rows.forEach((r) => c[r.status] !== undefined && c[r.status]++);
+    els.summary.className = "grid grid-cols-2 sm:grid-cols-5 gap-4";
     els.summary.innerHTML = [
       card("Total", rows.length, "text-slate-900"),
       card("Tepat Waktu", c.present, "text-emerald-600"),
-      card("Terlambat", c.late, "text-amber-600"),
-      card("Tidak Hadir", c.absent, "text-rose-600"),
+      card("Toleransi", c.tolerance, "text-yellow-600"),
+      card("Terlambat", c.late, "text-rose-600"),
+      card("Tidak Hadir", c.absent, "text-slate-500"),
     ].join("");
   }
 
@@ -185,11 +187,13 @@ export async function render(root, ctx) {
   // ---- Rekap (range) ----
   function renderRekapSummary(data) {
     const t = data.totals;
+    els.summary.className = "grid grid-cols-2 sm:grid-cols-5 gap-4";
     els.summary.innerHTML = [
       card("Hari Kerja", data.workdays, "text-slate-900"),
-      card("Hadir Tepat", t.present, "text-emerald-600"),
-      card("Terlambat", t.late, "text-amber-600"),
-      card("Tidak Hadir", t.absent, "text-rose-600"),
+      card("Tepat Waktu", t.present, "text-emerald-600"),
+      card("Toleransi", t.tolerance ?? 0, "text-yellow-600"),
+      card("Terlambat", t.late, "text-rose-600"),
+      card("Tidak Hadir", t.absent, "text-slate-500"),
     ].join("");
   }
 
@@ -204,14 +208,15 @@ export async function render(root, ctx) {
         </td>
         <td class="px-5 py-4 text-sm text-slate-600">${r.department || "—"}</td>
         <td class="px-5 py-4 text-center text-sm font-medium text-emerald-600">${r.present}</td>
-        <td class="px-5 py-4 text-center text-sm font-medium text-amber-600">${r.late}</td>
-        <td class="px-5 py-4 text-center text-sm font-medium text-rose-600">${r.absent}</td>
+        <td class="px-5 py-4 text-center text-sm font-medium text-yellow-600">${r.tolerance ?? 0}</td>
+        <td class="px-5 py-4 text-center text-sm font-medium text-rose-600">${r.late}</td>
+        <td class="px-5 py-4 text-center text-sm font-medium text-slate-500">${r.absent}</td>
         <td class="px-5 py-4 text-center text-sm font-semibold text-slate-900">${r.attended}/${r.workdays}</td>
         <td class="px-5 py-4 text-center">
           <span class="inline-flex items-center gap-1 text-sm font-semibold ${r.rate >= 80 ? "text-emerald-600" : r.rate >= 50 ? "text-amber-600" : "text-rose-600"}">${r.rate}%</span>
         </td>
-      </tr>`).join("") : `<tr><td colspan="7" class="px-5 py-12 text-center text-slate-400 text-sm">Tidak ada data.</td></tr>`;
-    els.table.innerHTML = tableShell(["Karyawan", "Departemen", "Hadir", "Terlambat", "Tidak Hadir", "Total Hadir", "Kehadiran"], body, 2);
+      </tr>`).join("") : `<tr><td colspan="8" class="px-5 py-12 text-center text-slate-400 text-sm">Tidak ada data.</td></tr>`;
+    els.table.innerHTML = tableShell(["Karyawan", "Departemen", "Tepat Waktu", "Toleransi", "Terlambat", "Tidak Hadir", "Total Hadir", "Kehadiran"], body, 2);
   }
 
   function tableShell(heads, body, centerFrom = 99) {

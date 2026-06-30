@@ -153,11 +153,43 @@ def now_iso() -> str:
     return datetime.now(timezone.utc).isoformat()
 
 
-def compute_status(check_in_dt: datetime) -> str:
+DEFAULT_SETTINGS = {"work_start": "09:00", "work_end": "17:00", "tolerance_minutes": 15}
+
+
+async def get_settings() -> dict:
+    doc = await db.app_settings.find_one({"_id": "work_schedule"})
+    if not doc:
+        return dict(DEFAULT_SETTINGS)
+    return {
+        "work_start": doc.get("work_start", DEFAULT_SETTINGS["work_start"]),
+        "work_end": doc.get("work_end", DEFAULT_SETTINGS["work_end"]),
+        "tolerance_minutes": int(doc.get("tolerance_minutes", DEFAULT_SETTINGS["tolerance_minutes"])),
+    }
+
+
+async def _apply_settings(payload: dict) -> None:
+    await db.app_settings.update_one({"_id": "work_schedule"}, {"$set": payload}, upsert=True)
+
+
+def _validate_hhmm(s: str) -> None:
+    try:
+        hh, mm = map(int, s.split(":"))
+        assert 0 <= hh < 24 and 0 <= mm < 60
+    except Exception:
+        raise HTTPException(status_code=400, detail="Format jam tidak valid (HH:MM)")
+
+
+def compute_status(check_in_dt: datetime, work_start: str = "09:00",
+                   tolerance_minutes: int = 15) -> str:
     local = check_in_dt.astimezone(TZ)
-    hh, mm = map(int, WORK_START.split(":"))
+    hh, mm = map(int, work_start.split(":"))
     limit = local.replace(hour=hh, minute=mm, second=0, microsecond=0)
-    return "late" if local > limit else "present"
+    grace = limit + timedelta(minutes=tolerance_minutes)
+    if local <= limit:
+        return "present"
+    if local <= grace:
+        return "tolerance"
+    return "late"
 
 
 # ----------------------------------------------------------------------------
@@ -233,6 +265,12 @@ class LoginBody(BaseModel):
 class ChangePasswordBody(BaseModel):
     current_password: str
     new_password: str
+
+
+class SettingsBody(BaseModel):
+    work_start: str
+    work_end: str
+    tolerance_minutes: int
 
 
 class EmployeeBody(BaseModel):
@@ -456,7 +494,8 @@ async def check_in(body: CheckInBody, user: dict = Depends(get_current_user)):
     verify_attendance_identity(user, body, office)
 
     check_in_dt = datetime.now(timezone.utc)
-    status = compute_status(check_in_dt)
+    settings = await get_settings()
+    status = compute_status(check_in_dt, settings["work_start"], settings["tolerance_minutes"])
     doc = {
         "user_id": str(user["_id"]),
         "date": date,
@@ -583,17 +622,19 @@ async def _build_summary(start: str, end: str,
     workdays = _count_workdays(start, end)
     agg = {}
     for r in recs:
-        a = agg.setdefault(r["user_id"], {"present": 0, "late": 0, "attended": 0})
+        a = agg.setdefault(r["user_id"], {"present": 0, "tolerance": 0, "late": 0, "attended": 0})
         st = r.get("status")
         if st == "present":
             a["present"] += 1
+        elif st == "tolerance":
+            a["tolerance"] += 1
         elif st == "late":
             a["late"] += 1
         if r.get("check_in"):
             a["attended"] += 1
-    rows, tot = [], {"present": 0, "late": 0, "absent": 0, "attended": 0}
+    rows, tot = [], {"present": 0, "tolerance": 0, "late": 0, "absent": 0, "attended": 0}
     for u in users:
-        a = agg.get(str(u["_id"]), {"present": 0, "late": 0, "attended": 0})
+        a = agg.get(str(u["_id"]), {"present": 0, "tolerance": 0, "late": 0, "attended": 0})
         attended = a["attended"]
         absent = max(0, workdays - attended)
         rate = round(attended / workdays * 100, 1) if workdays else 0
@@ -601,10 +642,11 @@ async def _build_summary(start: str, end: str,
             "user_id": str(u["_id"]), "employee_id": u.get("employee_id"),
             "name": u.get("name"), "department": u.get("department"),
             "position": u.get("position"), "role": u.get("role"),
-            "present": a["present"], "late": a["late"], "absent": absent,
-            "attended": attended, "workdays": workdays, "rate": rate,
+            "present": a["present"], "tolerance": a["tolerance"], "late": a["late"],
+            "absent": absent, "attended": attended, "workdays": workdays, "rate": rate,
         })
         tot["present"] += a["present"]
+        tot["tolerance"] += a["tolerance"]
         tot["late"] += a["late"]
         tot["attended"] += attended
         tot["absent"] += absent
@@ -651,7 +693,7 @@ def _xlsx_bytes(data: dict) -> bytes:
     ws.append(["Rekap Absensi Karyawan — MitraKeuangan"])
     ws.append([f"Periode: {data['start']} s/d {data['end']}    Hari kerja: {data['workdays']}"])
     ws.append([])
-    headers = ["ID Karyawan", "Nama", "Departemen", "Posisi", "Hadir Tepat",
+    headers = ["ID Karyawan", "Nama", "Departemen", "Posisi", "Tepat Waktu", "Toleransi",
                "Terlambat", "Tidak Hadir", "Total Hadir", "Hari Kerja", "Kehadiran (%)"]
     ws.append(headers)
     head_row = ws.max_row
@@ -662,15 +704,16 @@ def _xlsx_bytes(data: dict) -> bytes:
         c.alignment = Alignment(horizontal="center")
     for r in data["rows"]:
         ws.append([r["employee_id"], r["name"], r["department"], r["position"],
-                   r["present"], r["late"], r["absent"], r["attended"],
+                   r["present"], r["tolerance"], r["late"], r["absent"], r["attended"],
                    r["workdays"], r["rate"]])
     t = data["totals"]
     ws.append([])
-    total_row = ["", "TOTAL", "", "", t["present"], t["late"], t["absent"], t["attended"], "", ""]
+    total_row = ["", "TOTAL", "", "", t["present"], t["tolerance"], t["late"], t["absent"],
+                 t["attended"], "", ""]
     ws.append(total_row)
     for c in ws[ws.max_row]:
         c.font = Font(bold=True)
-    widths = [14, 26, 18, 20, 12, 11, 12, 12, 11, 14]
+    widths = [14, 26, 18, 20, 11, 10, 11, 11, 11, 10, 13]
     for i, w in enumerate(widths, 1):
         ws.column_dimensions[chr(64 + i)].width = w
 
@@ -708,8 +751,8 @@ def _pdf_bytes(data: dict) -> bytes:
     pdf.cell(0, 6, f"Periode: {data['start']} s/d {data['end']}    Hari kerja: {data['workdays']}",
              new_x="LMARGIN", new_y="NEXT")
     pdf.ln(2)
-    cols = [("No", 10), ("ID", 22), ("Nama", 55), ("Departemen", 38), ("Hadir", 18),
-            ("Telat", 16), ("Absen", 16), ("Total", 16), ("Hr Kerja", 20), ("%", 16)]
+    cols = [("No", 10), ("ID", 20), ("Nama", 48), ("Departemen", 34), ("Tepat", 16),
+            ("Tol", 14), ("Telat", 16), ("Absen", 16), ("Total", 16), ("Hr Kerja", 18), ("%", 14)]
     pdf.set_font("Helvetica", "B", 8)
     pdf.set_fill_color(11, 11, 12)
     pdf.set_text_color(224, 177, 0)
@@ -719,19 +762,21 @@ def _pdf_bytes(data: dict) -> bytes:
     pdf.set_text_color(0, 0, 0)
     pdf.set_font("Helvetica", "", 8)
     for i, r in enumerate(data["rows"], 1):
-        vals = [str(i), _latin(r["employee_id"]), _latin(r["name"])[:34],
-                _latin(r.get("department") or "-")[:24], str(r["present"]), str(r["late"]),
-                str(r["absent"]), str(r["attended"]), str(r["workdays"]), str(r["rate"])]
+        vals = [str(i), _latin(r["employee_id"]), _latin(r["name"])[:30],
+                _latin(r.get("department") or "-")[:22], str(r["present"]), str(r["tolerance"]),
+                str(r["late"]), str(r["absent"]), str(r["attended"]), str(r["workdays"]),
+                str(r["rate"])]
         for (h, w), v in zip(cols, vals):
             pdf.cell(w, 6, v, border=1, align="C" if h not in ("Nama", "Departemen", "ID") else "L")
         pdf.ln(6)
     t = data["totals"]
     pdf.set_font("Helvetica", "B", 8)
-    pdf.cell(10 + 22 + 55 + 38, 7, "TOTAL", border=1, align="R")
-    for v, w in [(t["present"], 18), (t["late"], 16), (t["absent"], 16), (t["attended"], 16)]:
+    pdf.cell(10 + 20 + 48 + 34, 7, "TOTAL", border=1, align="R")
+    for v, w in [(t["present"], 16), (t["tolerance"], 14), (t["late"], 16),
+                 (t["absent"], 16), (t["attended"], 16)]:
         pdf.cell(w, 7, str(v), border=1, align="C")
-    pdf.cell(20, 7, "", border=1)
-    pdf.cell(16, 7, "", border=1)
+    pdf.cell(18, 7, "", border=1)
+    pdf.cell(14, 7, "", border=1)
 
     # Halaman detail harian (jam masuk & pulang)
     detail = data.get("detail") or []
@@ -780,21 +825,24 @@ async def export_summary(format: str = Query("xlsx"), start: str = Query(...), e
         media_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
         headers={"Content-Disposition": f'attachment; filename="{fname}.xlsx"'})
 def _summarize_today(users: list, rec_by_user: dict) -> dict:
-    present = late = 0
+    present = tolerance = late = 0
     dept_map = {}
     for u in users:
         r = rec_by_user.get(str(u["_id"]))
         st = r["status"] if r else "absent"
         if st == "present":
             present += 1
+        elif st == "tolerance":
+            tolerance += 1
         elif st == "late":
             late += 1
         dept = u.get("department") or "Umum"
         dept_map.setdefault(dept, {"department": dept, "total": 0, "hadir": 0})
         dept_map[dept]["total"] += 1
-        if st in ("present", "late"):
+        if st in ("present", "tolerance", "late"):
             dept_map[dept]["hadir"] += 1
-    return {"present": present, "late": late, "departments": list(dept_map.values())}
+    return {"present": present, "tolerance": tolerance, "late": late,
+            "departments": list(dept_map.values())}
 
 
 async def _seven_day_trend() -> list:
@@ -804,8 +852,13 @@ async def _seven_day_trend() -> list:
     counts = {dt: {"present": 0, "late": 0} for dt in dates}
     for r in recs:
         c = counts.get(r.get("date"))
-        if c and r.get("status") in ("present", "late"):
-            c[r["status"]] += 1
+        if not c:
+            continue
+        st = r.get("status")
+        if st in ("present", "tolerance"):
+            c["present"] += 1
+        elif st == "late":
+            c["late"] += 1
     trend = []
     for day, dt in zip(days, dates):
         p, l = counts[dt]["present"], counts[dt]["late"]
@@ -829,17 +882,38 @@ async def dashboard_stats(user: dict = Depends(require_roles(MONITOR_ROLES))):
     rec_by_user = {r["user_id"]: r for r in recs}
 
     summary = _summarize_today(users, rec_by_user)
-    present, late = summary["present"], summary["late"]
-    absent = total - present - late
+    present, tolerance, late = summary["present"], summary["tolerance"], summary["late"]
+    absent = total - present - tolerance - late
 
     return {
         "date": date,
-        "total": total, "present": present, "late": late, "absent": absent,
-        "attendance_rate": round((present + late) / total * 100, 1) if total else 0,
+        "total": total, "present": present, "tolerance": tolerance, "late": late, "absent": absent,
+        "attendance_rate": round((present + tolerance + late) / total * 100, 1) if total else 0,
         "departments": summary["departments"],
         "trend": await _seven_day_trend(),
         "recent": _recent_activity(recs, users),
     }
+
+
+@api_router.get("/settings")
+async def read_settings(user: dict = Depends(get_current_user)):
+    return await get_settings()
+
+
+@api_router.put("/settings")
+async def update_settings(body: SettingsBody, user: dict = Depends(require_roles(HR_ROLES))):
+    _validate_hhmm(body.work_start)
+    _validate_hhmm(body.work_end)
+    if not (0 <= body.tolerance_minutes <= 120):
+        raise HTTPException(status_code=400, detail="Toleransi harus 0–120 menit")
+    payload = {"work_start": body.work_start, "work_end": body.work_end,
+               "tolerance_minutes": body.tolerance_minutes}
+    if user["role"] in APPROVER_ROLES:
+        await _apply_settings(payload)
+        return {"ok": True, "applied": True, **payload}
+    summary = (f"Ubah jadwal kerja: masuk {body.work_start}, pulang {body.work_end}, "
+               f"toleransi {body.tolerance_minutes} menit")
+    return await _create_request("settings", user, summary=summary, payload=payload)
 
 
 # ----------------------------------------------------------------------------
@@ -1009,6 +1083,8 @@ async def approve_request(req_id: str, user: dict = Depends(require_roles(APPROV
         result = await _apply_update_employee(req["target_emp_id"], req.get("payload") or {})
     elif action == "delete":
         await _apply_delete_employee(req["target_emp_id"])
+    elif action == "settings":
+        await _apply_settings(req.get("payload") or {})
     await db.employee_requests.update_one({"_id": req["_id"]}, {"$set": {
         "status": "approved", "reviewed_by": str(user["_id"]),
         "reviewed_by_name": user.get("name"), "reviewed_at": now_iso()}})
@@ -1037,7 +1113,8 @@ async def reject_request(req_id: str, body: RejectBody, user: dict = Depends(req
 # ----------------------------------------------------------------------------
 # Notifications (role-aware)
 # ----------------------------------------------------------------------------
-_ACTION_LABEL = {"create": "Tambah karyawan", "update": "Ubah data karyawan", "delete": "Hapus karyawan"}
+_ACTION_LABEL = {"create": "Tambah karyawan", "update": "Ubah data karyawan",
+                 "delete": "Hapus karyawan", "settings": "Ubah jadwal kerja"}
 
 
 @api_router.get("/notifications")
