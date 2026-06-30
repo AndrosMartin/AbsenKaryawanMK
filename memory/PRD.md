@@ -46,11 +46,20 @@ Play CDN native, modul dipanggil dinamis dalam 1 index. Desain dashboard profesi
 - Verified: testing agent iteration_6 — backend 8/8 pytest PASS, frontend 15/15 PASS, tanpa regresi.
 - Catatan refactor (backlog): server.py ~1274 baris, sebaiknya dipecah jadi modul (auth/employees/attendance/exports/push).
 
-## Backlog — FASE berikutnya (disetujui konsep, belum dikerjakan)
-- **FASE 2**: Jadwal masuk + toleransi 15 menit → 3 status (Tepat Waktu ≤09:00 / Toleransi 09:01–09:15 / Terlambat >09:15), bisa di-set HR/Direksi dengan approval Direksi. (CATATAN: status `tolerance` & `_STATUS_LABEL` sudah disiapkan di backend.)
+## Implemented (2026-06-30) — FASE 2 (Jadwal & Toleransi, global)
+- **Pengaturan jadwal kerja global**: koleksi `app_settings` (singleton) {work_start, work_end, tolerance_minutes}; default 09:00/17:00/15. Endpoint `GET /api/settings` (semua auth), `PUT /api/settings` (HR_ROLES). Owner/Direksi terapkan langsung; HRD → request `action="settings"` masuk antrian approval Direksi (reuse employee_requests + notifikasi). Halaman frontend **Pengaturan** (settings.js, nav untuk HR_ROLES) + preview aturan live.
+- **3 status kehadiran**: `compute_status(check_in, work_start, tolerance)` → present (≤ jam masuk) / tolerance (≤ +toleransi) / late. Diterapkan di check-in, dashboard (kartu Toleransi, rate = present+tolerance+late), tren 7 hari, Monitoring (harian 5 kartu + rekap kolom Toleransi), Riwayat, dan export PDF/Excel (kolom Toleransi + label status).
+- `statusPill` tambah state "tolerance" (kuning); "late" jadi merah.
+- Verified: testing agent iteration_7 — backend 11/11 pytest PASS, frontend full PASS (nav gating, dashboard/monitoring/settings, alur approval HRD), tanpa regresi.
+
+## Backlog — FASE berikutnya
 - **FASE 3**: Pengajuan Cuti multi-layer (HRD → Direksi/Manager → Reviewer) + jatah cuti + penunjukan Reviewer.
-- **FASE 4**: Telat isi alasan → approval HRD/Manager = dihitung Hadir, jika tidak = potong cuti (butuh sistem cuti Fase 3).
-- Klarifikasi yang masih perlu dijawab user: urutan/jumlah layer approval cuti & jatah cuti/tahun; cara menunjuk Reviewer; jadwal global vs per-dept; besar potong cuti per telat.
+- **FASE 4** (aturan dikonfirmasi user, butuh sistem Cuti Fase 3 dulu):
+  - Telat (>toleransi) bisa isi alasan → masuk approval HRD/Manager.
+  - Jika di-approve & check-in **≤ 10:00** → kompensasi dihitung **Hadir**.
+  - Check-in **> 12:00** → **potong cuti 0,5 hari**.
+  - Telat >15 menit & **tidak di-approve** → **kartu kuning (yellow card)** yang berdampak ke **KPI** karyawan.
+- Klarifikasi tersisa untuk Fase 3: urutan & jumlah layer approval cuti (berurutan & semua harus setuju?), jatah cuti/tahun, cara menunjuk Reviewer (toggle Manager).
 - **Filter periode di Monitoring (Status Karyawan)**: Harian (1 tanggal), Rentang Tanggal (custom), Minggu Ini, Bulan Ini, Tahun Ini + pencarian nama/departemen. Mode rentang menampilkan tabel **rekap per-karyawan** (Hadir, Terlambat, Tidak Hadir, Total Hadir / Hari Kerja, % Kehadiran) dengan kartu ringkasan Hari Kerja/Hadir Tepat/Terlambat/Tidak Hadir.
 - **Backend**: `GET /api/attendance/summary?start&end&q&user_id` (MONITOR_ROLES) → {workdays, rows[], totals}. `workdays` = Senin–Jumat dalam rentang dibatasi s/d hari ini. `absent = max(0, workdays - attended)`.
 - **Export**: `GET /api/attendance/summary/export?format=pdf|xlsx&...` → file PDF (fpdf2, landscape A4 berlogo brand) atau Excel (openpyxl, header gold/hitam). Frontend mengunduh via fetch+Bearer→blob (tombol PDF/Excel).
