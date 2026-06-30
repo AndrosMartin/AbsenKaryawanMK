@@ -39,7 +39,18 @@ Play CDN native, modul dipanggil dinamis dalam 1 index. Desain dashboard profesi
 - **Role HRD + workflow persetujuan**: HRD bisa ajukan CRUD karyawan (tidak bisa set role owner/direksi); perubahan masuk antrian `employee_requests` (pending) dan baru berlaku setelah disetujui Owner/Direksi. Owner/Direksi tetap langsung. Endpoint: `GET /api/employee-requests`, `/approve`, `/reject`, `/pending-count`. Halaman frontend "Persetujuan" (approvals.js). Seed user hrd@company.com.
 - Verified: backend curl + pytest 31/31; frontend testing agent iteration_2 (HRD nav bug ditemukan & diperbaiki).
 
-## Implemented (2026-06-29) — Rekap & Export Monitoring
+## Implemented (2026-06-30) — FASE 1 (dari paket 6 fitur)
+- **#5 Ganti password sendiri**: endpoint `POST /api/auth/change-password` (semua role, auth) — validasi password lama, min 6 karakter, harus beda. UI form di halaman Profil (kartu "Ganti Password"). Auth playbook via integration_expert.
+- **#2 Manual Book disembunyikan dari Staff**: link sidebar "Manual Book (PDF)" hanya tampil untuk non-staff (Owner/Direksi/Manager/HRD).
+- **#6 Report + Jam Masuk & Pulang**: export PDF/Excel kini punya bagian/sheet "Detail Harian" (Tanggal, ID, Nama, Departemen, Jam Masuk, Jam Pulang, Status) — waktu dikonversi UTC→Asia/Jakarta. `_build_summary(include_detail=True)`.
+- Verified: testing agent iteration_6 — backend 8/8 pytest PASS, frontend 15/15 PASS, tanpa regresi.
+- Catatan refactor (backlog): server.py ~1274 baris, sebaiknya dipecah jadi modul (auth/employees/attendance/exports/push).
+
+## Backlog — FASE berikutnya (disetujui konsep, belum dikerjakan)
+- **FASE 2**: Jadwal masuk + toleransi 15 menit → 3 status (Tepat Waktu ≤09:00 / Toleransi 09:01–09:15 / Terlambat >09:15), bisa di-set HR/Direksi dengan approval Direksi. (CATATAN: status `tolerance` & `_STATUS_LABEL` sudah disiapkan di backend.)
+- **FASE 3**: Pengajuan Cuti multi-layer (HRD → Direksi/Manager → Reviewer) + jatah cuti + penunjukan Reviewer.
+- **FASE 4**: Telat isi alasan → approval HRD/Manager = dihitung Hadir, jika tidak = potong cuti (butuh sistem cuti Fase 3).
+- Klarifikasi yang masih perlu dijawab user: urutan/jumlah layer approval cuti & jatah cuti/tahun; cara menunjuk Reviewer; jadwal global vs per-dept; besar potong cuti per telat.
 - **Filter periode di Monitoring (Status Karyawan)**: Harian (1 tanggal), Rentang Tanggal (custom), Minggu Ini, Bulan Ini, Tahun Ini + pencarian nama/departemen. Mode rentang menampilkan tabel **rekap per-karyawan** (Hadir, Terlambat, Tidak Hadir, Total Hadir / Hari Kerja, % Kehadiran) dengan kartu ringkasan Hari Kerja/Hadir Tepat/Terlambat/Tidak Hadir.
 - **Backend**: `GET /api/attendance/summary?start&end&q&user_id` (MONITOR_ROLES) → {workdays, rows[], totals}. `workdays` = Senin–Jumat dalam rentang dibatasi s/d hari ini. `absent = max(0, workdays - attended)`.
 - **Export**: `GET /api/attendance/summary/export?format=pdf|xlsx&...` → file PDF (fpdf2, landscape A4 berlogo brand) atau Excel (openpyxl, header gold/hitam). Frontend mengunduh via fetch+Bearer→blob (tombol PDF/Excel).
