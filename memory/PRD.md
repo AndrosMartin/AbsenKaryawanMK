@@ -61,6 +61,13 @@ Play CDN native, modul dipanggil dinamis dalam 1 index. Desain dashboard profesi
 - Verified: testing agent iteration_8 — backend 24/24 pytest PASS (alur 3 layer + guard 403 + reject + saldo + validasi), frontend 100%, tanpa regresi. DB dibersihkan (hanya owner).
 - Catatan kecil/backlog: (a) DELETE karyawan belum cascade hapus `leave_requests` (orphan); (b) response reject minimal (frontend tetap re-fetch); (c) belum ada kalender libur nasional dalam hitungan hari kerja; (d) server.py ~1622 baris — perlu dipecah jadi modul.
 
+## Implemented (2026-06-30) — FASE 4 (Penanganan Telat + Papan KPI Kartu Kuning)
+- **Check-in telat**: jika check-in > 12:00 → otomatis **potong cuti 0,5 hari** (koleksi `leave_deductions`); jika 09:16–12:00 → karyawan isi **alasan** (`POST /api/late/reason`) lalu butuh **approval 1 layer** (HRD/Manager/Direksi/Owner).
+- **Keputusan telat**: approve & check-in ≤10:00 → dikompensasi jadi **Hadir** (status present); 10:01–12:00 → tetap Terlambat tanpa kartu kuning; reject/pending → **yellow_card** (KPI). Endpoint `/api/late/pending|{id}/approve|{id}/reject`.
+- **Papan KPI Kedisiplinan** (`GET /api/kpi/discipline?month=`): ranking bulan berjalan (yellow_cards + potong cuti + jumlah telat). Tampil di **Dashboard** untuk Owner/Direksi/HRD; **Manager** opsional via toggle `kpi_access` (`PUT /api/employees/{id}/kpi-access`, HR_ROLES). Toggle Reviewer & KPI ada di menu Karyawan (per Manager).
+- Saldo cuti kini memperhitungkan potongan telat (`balance.deducted`). Banner status telat tampil di halaman Absensi.
+- Verified: testing agent iteration_9 — backend 14/14 PASS, frontend 100%, DB dibersihkan (owner-only). Test file: `/app/backend/tests/test_fase4_late_kpi.py`.
+
 ## Backlog — FASE berikutnya
 - **FASE 3**: Pengajuan Cuti multi-layer (HRD → Direksi/Manager → Reviewer) + jatah cuti + penunjukan Reviewer.
 - **FASE 4** (aturan dikonfirmasi user, butuh sistem Cuti Fase 3 dulu):
